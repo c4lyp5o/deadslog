@@ -1,0 +1,27 @@
+{
+	"name": "deadslog",
+	"version": "1.0.0",
+	"description": "A dead simple logger module for Node.js",
+	"main": "index.js",
+	"type": "module",
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"keywords": [
+		"logger",
+		"logging",
+		"node",
+		"console",
+		"log",
+		"debug",
+		"info",
+		"warn",
+		"error",
+		"stream"
+	],
+	"author": "c4lyp5o",
+	"license": "ISC",
+	"dependencies": {
+		"chalk": "^5.4.1"
+	}
+}
