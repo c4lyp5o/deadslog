@@ -1,5 +1,8 @@
 # deadslog
 
+A dead simple logger module for Node.js.
+
+
 ## 🚀 Features
 
 - ✅ Console & file logging
