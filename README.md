@@ -1,5 +1,7 @@
 # deadslog
 
+[![CI & Publish](https://github.com/c4lyp5o/deadslog/actions/workflows/ci-publish.yml/badge.svg)](https://github.com/c4lyp5o/deadslog/actions/workflows/ci-publish.yml)
+
 A dead simple logger module for Node.js.
 
 
