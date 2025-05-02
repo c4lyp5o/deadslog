@@ -4,24 +4,31 @@
 	"description": "A dead simple logger module for Node.js",
 	"main": "index.js",
 	"type": "module",
-	"scripts": {
-		"test": "echo \"Error: no test specified\" && exit 1"
+	"exports": {
+		".": {
+			"import": "./index.js"
+		}
 	},
-	"keywords": [
-		"logger",
-		"logging",
-		"node",
-		"console",
-		"log",
-		"debug",
-		"info",
-		"warn",
-		"error",
-		"stream"
-	],
+	"scripts": {
+		"test": "vitest run",
+		"release": "standard-version"
+	},
+	"keywords": ["logger", "logging", "chalk", "file-log", "cli", "colored-logs"],
 	"author": "c4lyp5o",
-	"license": "ISC",
+	"license": "MIT",
 	"dependencies": {
-		"chalk": "^5.4.1"
-	}
+		"chalk": "^5.3.0"
+	},
+	"devDependencies": {
+		"standard-version": "^9.5.0",
+		"vitest": "^3.1.2"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/c4lyp5o/deadslog.git"
+	},
+	"bugs": {
+		"url": "https://github.com/c4lyp5o/deadslog/issues"
+	},
+	"homepage": "https://github.com/c4lyp5o/deadslog#readme"
 }
