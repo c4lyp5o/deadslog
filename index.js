@@ -254,11 +254,9 @@ const deadslog = ({
 				}
 
 				const compressedPath = path.join(dir, `${name}.1${ext}.gz`);
-				await stream.promises.pipeline(
-					fs.createReadStream(logFilePath),
-					zlib.createGzip(),
-					fs.createWriteStream(compressedPath),
-				);
+				const inputBuffer = fs.readFileSync(logFilePath);
+				const compressedBuffer = zlib.gzipSync(inputBuffer);
+				fs.writeFileSync(compressedPath, compressedBuffer);
 			}
 
 			// Rotate base log file
