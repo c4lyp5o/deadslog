@@ -2,7 +2,6 @@ import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
-import stream from "node:stream";
 import { mkdirWithRetry, writeFileWithRetry } from "./utils/helpers";
 
 // Default formatter function
@@ -280,14 +279,14 @@ const deadslog = ({
 		isProcessingQueue = true;
 
 		while (writeQueue.length > 0) {
-			const { message, resolve, reject } = writeQueue.shift(); // Dequeue
+			const { message, resolve, reject } = writeQueue.shift();
 			try {
 				if (!fileStream || fileStream.writableEnded) {
 					console.warn("Attempted to write to closed file stream.");
 					reject(new Error("File stream is closed."));
 					return;
 				}
-				if (fileOutput.rotate) await rotateLogs(); // Rotate logs if needed
+				if (fileOutput.rotate) await rotateLogs();
 				fileStream.write(`${message}\n`, (err) => {
 					if (err) {
 						console.error("Error writing to log file:", err);
@@ -297,7 +296,7 @@ const deadslog = ({
 				});
 			} catch (err) {
 				console.error("Unexpected error during log write:", err);
-				reject(err); // Reject the current promise
+				reject(err);
 			}
 		}
 
