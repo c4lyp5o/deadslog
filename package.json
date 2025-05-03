@@ -13,7 +13,15 @@
 		"test": "vitest run",
 		"release": "standard-version"
 	},
-	"keywords": ["logger", "logging", "chalk", "file-log", "cli", "colored-logs"],
+	"keywords": [
+		"logger",
+		"logging",
+		"chalk",
+		"file-log",
+		"cli",
+		"colored-logs",
+		"rotating"
+	],
 	"author": "c4lyp5o",
 	"license": "MIT",
 	"dependencies": {
