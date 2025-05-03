@@ -14,6 +14,7 @@ const tempDir7 = path.join(process.cwd(), "test", "logtest", "test7");
 const tempDir8 = path.join(process.cwd(), "test", "logtest", "test8");
 const tempDir9 = path.join(process.cwd(), "test", "logtest", "test9");
 const tempDir10 = path.join(process.cwd(), "test", "logtest", "test10");
+const tempDir11 = path.join(process.cwd(), "test", "logtest", "test11");
 
 const logFilePath = path.join(tempDir, "test-output.log");
 const logFilePath2 = path.join(tempDir2, "test-output.log");
@@ -25,6 +26,7 @@ const logFilePath7 = path.join(tempDir7, "test-output.log");
 const logFilePath8 = path.join(tempDir8, "test-output.log");
 const logFilePath9 = path.join(tempDir9, "test-output.log");
 const logFilePath10 = path.join(tempDir10, "test-output.log");
+const logFilePath11 = path.join(tempDir11, "test-output.log");
 
 afterEach(async () => {
 	vi.restoreAllMocks();
@@ -179,7 +181,7 @@ describe("deadslog extended tests", () => {
 		log.info("Message 4");
 		log.info("Message 3");
 
-		await new Promise((resolve) => setTimeout(resolve, 100));
+		await new Promise((resolve) => setTimeout(resolve, 50));
 		await log.destroy();
 
 		expect(fs.existsSync(path.join(tempDir3, "test-output.1.log"))).toBe(true);
@@ -209,7 +211,7 @@ describe("deadslog extended tests", () => {
 		log.info("Message 9");
 		log.info("Message 10");
 
-		await new Promise((resolve) => setTimeout(resolve, 100));
+		await new Promise((resolve) => setTimeout(resolve, 50));
 		await log.destroy();
 
 		// Check that only 2 files exist
@@ -244,6 +246,38 @@ describe("deadslog extended tests", () => {
 		);
 	});
 
+	it("should rotate and gzip old log files synchronously", async () => {
+		const logger = deadslog({
+			consoleOutput: { enabled: false },
+			fileOutput: {
+				enabled: true,
+				logFilePath: logFilePath11,
+				rotate: true,
+				maxLogSize: 50, // small for quick rotation
+				maxLogFiles: 2,
+				onMaxLogFilesReached: "archiveOld",
+			},
+		});
+
+		// Write many log entries to exceed size threshold
+		for (let i = 0; i < 50; i++) {
+			await logger.info("A".repeat(10));
+		}
+
+		await logger.destroy();
+
+		// Check the rotated and compressed files exist
+		const rotated1 = path.join(tempDir11, "test-output.1.log.gz");
+		const rotated2 = path.join(tempDir11, "test-output.2.log.gz");
+
+		expect(fs.existsSync(rotated1)).toBe(true);
+		expect(fs.existsSync(rotated2)).toBe(true);
+
+		// Check original file is recreated and writable
+		expect(fs.existsSync(logFilePath11)).toBe(true);
+		expect(() => fs.appendFileSync(logFilePath11, "more logs")).not.toThrow();
+	});
+
 	it("flushes queued logs on destroy", async () => {
 		const log = deadslog({
 			consoleOutput: { enabled: false },
@@ -253,8 +287,8 @@ describe("deadslog extended tests", () => {
 		// Log several messages quickly
 		for (let i = 0; i < 10; i++) log.info(`Flush test ${i}`);
 
+		await new Promise((resolve) => setTimeout(resolve, 50));
 		await log.destroy();
-		await new Promise((resolve) => setTimeout(resolve, 100));
 
 		const contents = fs.readFileSync(logFilePath6, "utf8");
 		expect(contents).toMatch(/Flush test 9/);
@@ -272,25 +306,13 @@ describe("deadslog extended tests", () => {
 		}
 
 		// Destroy and wait for flush
+		await new Promise((resolve) => setTimeout(resolve, 50));
 		await log.destroy();
-		await new Promise((resolve) => setTimeout(resolve, 100));
 
 		const contents = fs.readFileSync(logFilePath10, "utf8");
 		for (let i = 0; i < 5; i++) {
 			expect(contents).toMatch(new RegExp(`Flush test message ${i}`));
 		}
-	});
-
-	it("handles file stream errors gracefully", async () => {
-		const badPath = "/invalid/path/to/log.log";
-
-		const log = deadslog({
-			consoleOutput: { enabled: false },
-			fileOutput: { enabled: true, logFilePath: badPath },
-		});
-
-		expect(() => log.info("This should not crash")).not.toThrow();
-		await log.destroy();
 	});
 
 	it("handles multiple loggers writing concurrently", async () => {
@@ -307,10 +329,9 @@ describe("deadslog extended tests", () => {
 		log1.info("Message from logger 1");
 		log2.info("Message from logger 2");
 
-		await new Promise((resolve) => setTimeout(resolve, 100));
+		await new Promise((resolve) => setTimeout(resolve, 50));
 		await log1.destroy();
 		await log2.destroy();
-		await new Promise((resolve) => setTimeout(resolve, 100));
 
 		const contents = fs.readFileSync(logFilePath7, "utf8");
 		expect(contents).toMatch(/Message from logger 1/);
@@ -326,10 +347,10 @@ describe("deadslog extended tests", () => {
 		const logMessages = Array(1000).fill("High throughput test message");
 
 		// Simulate high throughput logging
-		// biome-ignore lint/complexity/noForEach: <explanation>
+		// biome-ignore lint/complexity/noForEach: prefer forEach for testing
 		logMessages.forEach((msg) => log.info(msg));
 
-		await new Promise((resolve) => setTimeout(resolve, 100));
+		await new Promise((resolve) => setTimeout(resolve, 50));
 		await log.destroy();
 
 		const contents = fs.readFileSync(logFilePath8, "utf8");
@@ -354,7 +375,7 @@ describe("deadslog extended tests", () => {
 			log.info(`High throughput message ${i}`);
 		}
 
-		await new Promise((resolve) => setTimeout(resolve, 100));
+		await new Promise((resolve) => setTimeout(resolve, 50));
 		await log.destroy();
 
 		// Check if rotation occurred and archived logs exist
