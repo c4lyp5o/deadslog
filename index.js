@@ -2,7 +2,7 @@ import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
-import { mkdirWithRetry, writeFileWithRetry } from "./utils/helpers";
+import { mkdirWithRetry, writeFileWithRetry } from "./utils/helpers.js";
 
 // Default formatter function
 const defaultFormatter = (level, message) => {
