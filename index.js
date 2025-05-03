@@ -2,7 +2,8 @@ import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
-import { pipeline } from "node:stream/promises";
+import stream from "node:stream";
+import { mkdirWithRetry, writeFileWithRetry } from "./utils/helpers";
 
 // Default formatter function
 const defaultFormatter = (level, message) => {
@@ -10,19 +11,52 @@ const defaultFormatter = (level, message) => {
 };
 
 // constants
-const EXIT_EVENTS = ["SIGINT", "SIGTERM", "exit"];
 const MAX_QUEUE_SIZE = 1000; // Maximum size of the write queue
 const validStrategies = ["deleteOld", "archiveOld"];
-const levelOrder = ["debug", "info", "success", "warn", "error"];
+const levelOrder = [
+	"trace",
+	"debug",
+	"info",
+	"success",
+	"warn",
+	"error",
+	"fatal",
+];
 
 // Color mapping for log levels
 const colorMap = {
+	trace: chalk.greenBright.bgBlack,
 	debug: chalk.gray,
 	info: chalk.blue,
 	success: chalk.green,
 	warn: chalk.yellow,
 	error: chalk.red,
+	fatal: chalk.red.bgWhite,
 	default: chalk.white,
+};
+
+// Global cleanup
+let cleanupAttached = false;
+const activeLoggers = new Set();
+
+const attachGlobalCleanup = () => {
+	if (cleanupAttached) return;
+
+	const cleanup = async () => {
+		for (const logger of activeLoggers) {
+			await logger.destroy?.();
+		}
+	};
+
+	process.once("exit", cleanup);
+	process.once("SIGINT", () => {
+		cleanup().then(() => process.exit(0));
+	});
+	process.once("SIGTERM", () => {
+		cleanup().then(() => process.exit(0));
+	});
+
+	cleanupAttached = true;
 };
 
 /**
@@ -81,24 +115,17 @@ const deadslog = ({
 			const logFileDir = path.dirname(logFilePath);
 			try {
 				if (!fs.existsSync(logFileDir)) {
-					fs.mkdirSync(logFileDir, { recursive: true });
-				} else {
-					if (!fs.statSync(logFileDir).isDirectory()) {
-						throw new Error(`Path ${logFileDir} is not a directory.`);
-					}
-					try {
-						if (!fs.existsSync(logFilePath)) {
-							fs.writeFileSync(logFilePath);
-						}
-					} catch (err) {
-						throw new Error(
-							`Failed to create log file at ${logFilePath}: ${err.message}. Ensure the file path is valid and writable.`,
-						);
-					}
+					mkdirWithRetry(logFileDir, 5, 100);
+				}
+				if (!fs.statSync(logFileDir).isDirectory()) {
+					throw new Error(`Path ${logFileDir} is not a directory.`);
+				}
+				if (!fs.existsSync(logFilePath)) {
+					writeFileWithRetry(logFilePath, "", 5, 100);
 				}
 			} catch (err) {
 				throw new Error(
-					`Failed to create log directory at ${logFileDir}: ${err.message}. Ensure the directory path is valid and writable.`,
+					`Failed to initialize log file or directory: ${err.message}. Ensure the paths are valid and writable.`,
 				);
 			}
 		}
@@ -140,20 +167,19 @@ const deadslog = ({
 	if (typeof minLevel !== "string") {
 		throw new Error("minLevel must be a string.");
 	}
-	if (!levelOrder.includes(minLevel)) {
+	if (!levelOrder.includes(minLevel.toLowerCase())) {
 		throw new Error(
 			`Invalid minLevel: ${minLevel}. Valid levels are: ${levelOrder.join(", ")}.`,
 		);
 	}
 
 	// initialization
-	let exitHandlersAttached = false;
 	let logFilePath = null;
 	let fileStream = null;
 	let isRotating = false;
 	let isProcessingQueue = false;
 	const writeQueue = [];
-	const minLevelIndex = levelOrder.indexOf(minLevel);
+	const minLevelIndex = levelOrder.indexOf(minLevel.toLowerCase());
 
 	if (fileOutput.enabled) {
 		logFilePath = path.resolve(fileOutput.logFilePath);
@@ -169,71 +195,75 @@ const deadslog = ({
 		isRotating = true;
 
 		try {
-			if (!fs.existsSync(logFilePath)) return;
-
-			const stats = await fs.promises.stat(logFilePath);
-			if (stats.size < fileOutput.maxLogSize) {
-				isRotating = false;
-				return;
+			let stats;
+			try {
+				stats = await fs.promises.stat(logFilePath);
+			} catch (err) {
+				if (err.code === "ENOENT") return; // File doesn't exist, no need to rotate
+				throw err;
 			}
+
+			if (stats.size < fileOutput.maxLogSize) return;
 
 			const { dir, name, ext } = path.parse(logFilePath);
 
 			if (fileOutput.onMaxLogFilesReached === "deleteOld") {
-				// Delete the oldest log file if it exists
 				const oldest = path.join(
 					dir,
 					`${name}.${fileOutput.maxLogFiles}${ext}`,
 				);
-				if (fs.existsSync(oldest)) {
+				try {
 					await fs.promises.unlink(oldest);
+				} catch (err) {
+					if (err.code !== "ENOENT") throw err;
 				}
 
-				// Shift log files
 				for (let i = fileOutput.maxLogFiles - 1; i >= 1; i--) {
 					const src = path.join(dir, `${name}.${i}${ext}`);
 					const dest = path.join(dir, `${name}.${i + 1}${ext}`);
-					if (fs.existsSync(src)) {
+					try {
 						await fs.promises.rename(src, dest);
+					} catch (err) {
+						if (err.code !== "ENOENT") throw err;
 					}
 				}
 
-				// Rename the current log file before clearing
 				const newLogFile = path.join(dir, `${name}.1${ext}`);
 				await fs.promises.rename(logFilePath, newLogFile);
 			}
 
 			if (fileOutput.onMaxLogFilesReached === "archiveOld") {
-				// Delete the oldest compressed log file
 				const oldest = path.join(
 					dir,
 					`${name}.${fileOutput.maxLogFiles}${ext}.gz`,
 				);
-				if (fs.existsSync(oldest)) {
+				try {
 					await fs.promises.unlink(oldest);
+				} catch (err) {
+					if (err.code !== "ENOENT") throw err;
 				}
 
-				// Shift compressed log files
 				for (let i = fileOutput.maxLogFiles - 1; i >= 1; i--) {
 					const src = path.join(dir, `${name}.${i}${ext}.gz`);
 					const dest = path.join(dir, `${name}.${i + 1}${ext}.gz`);
-					if (fs.existsSync(src)) {
+					try {
 						await fs.promises.rename(src, dest);
+					} catch (err) {
+						if (err.code !== "ENOENT") throw err;
 					}
 				}
 
-				// Compress the current log file to .1.log.gz
 				const compressedPath = path.join(dir, `${name}.1${ext}.gz`);
-				await pipeline(
+				await stream.promises.pipeline(
 					fs.createReadStream(logFilePath),
 					zlib.createGzip(),
 					fs.createWriteStream(compressedPath),
 				);
 			}
 
-			// Create new file
+			// Rotate base log file
 			fileStream.end();
-			fs.writeFileSync(logFilePath, "", "utf8");
+			await fs.promises.writeFile(logFilePath, "", "utf8");
 			fileStream = fs.createWriteStream(logFilePath, { flags: "a" });
 			fileStream.on("error", (err) => {
 				console.error("Logging stream error after rotation:", err);
@@ -314,11 +344,13 @@ const deadslog = ({
 	};
 
 	const loggerInstance = {
+		trace: (msg) => log("trace", msg),
 		debug: (msg) => log("debug", msg),
 		info: (msg) => log("info", msg),
 		success: (msg) => log("success", msg),
 		warn: (msg) => log("warn", msg),
 		error: (msg) => log("error", msg),
+		fatal: (msg) => log("fatal", msg),
 		flush: async () => {
 			if (!fileStream || writeQueue.length === 0) return;
 
@@ -326,10 +358,12 @@ const deadslog = ({
 			writeQueue.length = 0;
 
 			await Promise.allSettled(
-				pendingWrites.map(({ message }) => {
-					return writeToFile(message).catch((err) => {
+				pendingWrites.map(async ({ message }) => {
+					try {
+						return await writeToFile(message);
+					} catch (err) {
 						console.error("Flush write error:", err);
-					});
+					}
 				}),
 			);
 
@@ -344,16 +378,12 @@ const deadslog = ({
 				fileStream.end();
 				fileStream = null;
 			}
+			activeLoggers.delete(loggerInstance);
 		},
 	};
 
-	// Prevent duplicate exit handlers
-	if (!exitHandlersAttached) {
-		for (const event of EXIT_EVENTS) {
-			process.once(event, () => loggerInstance.destroy());
-		}
-		exitHandlersAttached = true;
-	}
+	activeLoggers.add(loggerInstance);
+	attachGlobalCleanup();
 
 	return loggerInstance;
 };
