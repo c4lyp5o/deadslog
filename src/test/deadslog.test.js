@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, afterAll, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import deadslog from "../index.js";
+import deadslog from "../../dist/index.js";
 
 const mainTestDir = path.join(process.cwd(), "test", "logtest");
 const tempDir = path.join(process.cwd(), "test", "logtest", "test1");
