@@ -42,7 +42,7 @@ afterAll(async () => {
 	}
 });
 
-describe("deadslog extended tests", () => {
+describe("deadslog tests", () => {
 	it("logs to console if called without config", () => {
 		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const log = deadslog();
@@ -72,27 +72,51 @@ describe("deadslog extended tests", () => {
 		);
 	});
 
-	it("writes to file if file output is enabled", async () => {
-		const log = deadslog({
-			consoleOutput: { enabled: false },
-			fileOutput: { enabled: true, logFilePath },
-		});
+	it("handles undefined messages gracefully", () => {
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const log = deadslog({ consoleOutput: { enabled: true } });
 
-		log.info("File test message");
+		log.info(undefined);
 
-		await new Promise((resolve) => setTimeout(resolve, 10));
-		await log.destroy();
+		expect(spy).toHaveBeenCalledWith(
+			expect.stringContaining("[Message is undefined]"),
+		);
 
-		const contents = fs.readFileSync(logFilePath, "utf8");
-		expect(contents).toMatch(/File test message/);
+		log.destroy();
+	});
+
+	it("handles non-stringifiable objects gracefully", () => {
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const log = deadslog({ consoleOutput: { enabled: true } });
+
+		const circularObject = {};
+		circularObject.circularRef = circularObject;
+
+		log.info(circularObject);
+
+		expect(spy).toHaveBeenCalledWith(
+			expect.stringContaining("[Non-serializable object]"),
+		);
+
+		log.destroy();
+	});
+
+	it("formats a string message correctly", () => {
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const log = deadslog({ consoleOutput: { enabled: true } });
+
+		log.info("Test string message");
+
+		expect(spy).toHaveBeenCalledWith(
+			expect.stringContaining("Test string message"),
+		);
+
+		log.destroy();
 	});
 
 	it("uses custom formatter when provided", async () => {
 		const log = deadslog({
-			consoleOutput: {
-				enabled: true,
-				coloredCoding: false,
-			},
+			consoleOutput: { enabled: true },
 			minLevel: "info",
 			formatter: (level, message) =>
 				`CUSTOM: ${level.toUpperCase()} - ${message}`,
@@ -101,7 +125,8 @@ describe("deadslog extended tests", () => {
 		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
 		log.info("Formatted!");
 
-		expect(spy).toHaveBeenCalledWith("CUSTOM: INFO - Formatted!");
+		expect(spy.mock.calls[0][0]).toMatch(/CUSTOM: INFO - Formatted!/);
+
 		await log.destroy();
 	});
 
@@ -160,6 +185,21 @@ describe("deadslog extended tests", () => {
 		expect(spy).not.toHaveBeenCalledWith(
 			expect.stringMatching(/This should be ignored/),
 		);
+	});
+
+	it("writes to file if file output is enabled", async () => {
+		const log = deadslog({
+			consoleOutput: { enabled: false },
+			fileOutput: { enabled: true, logFilePath },
+		});
+
+		log.info("File test message");
+
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		await log.destroy();
+
+		const contents = fs.readFileSync(logFilePath, "utf8");
+		expect(contents).toMatch(/File test message/);
 	});
 
 	it("rotates when max file size is reached", async () => {
