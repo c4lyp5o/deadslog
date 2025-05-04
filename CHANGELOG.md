@@ -25,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - Deprecated the use of `zlib`'s synchronous API in favor of more modern and efficient methods for file compression.
 
 ### Notes
+- Reduced filesize from 12.3kb to 7.5kb (60.97% reduction)
 - Backward compatibility is maintained, but developers are encouraged to transition to the updated API and utilize new features for better performance and reliability.
 
 
