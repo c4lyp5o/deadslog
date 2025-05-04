@@ -41,7 +41,7 @@ const logger = deadslog({
     enabled: true,
     logFilePath: './logs/app.log',
     rotate: true,
-    maxLogSize: 500_000, // bytes
+    maxLogSize: 500000, // bytes
     maxLogFiles: 5,
     onMaxLogFilesReached: 'archiveOld' // or 'deleteOld'
   },
@@ -105,7 +105,7 @@ const logger = deadslog({
 ```javascript
 const simpleFormatter = (level, message) => {
   const timestamp = new Date().toISOString();
-  return `[${timestamp}] [${level.toUpperCase()}] ${message}`;
+  return `[${timestamp}] [${level}] ${message}`;
 };
 ```
 
@@ -118,7 +118,7 @@ const simpleFormatter = (level, message) => {
 ```javascript
 const multilineFormatter = (level, message) => {
   const timestamp = new Date().toLocaleString();
-  return `---\nTime: ${timestamp}\nLevel: ${level.toUpperCase()}\nMessage: ${message}\n---`;
+  return `---\nTime: ${timestamp}\nLevel: ${level}\nMessage: ${message}\n---`;
 };
 ```
 
@@ -136,7 +136,7 @@ Message: Connected to database
 const csvFormatter = (level, message) => {
   const timestamp = new Date().toISOString();
   const escaped = message.replace(/"/g, '""');
-  return `"${timestamp}","${level.toUpperCase()}","${escaped}"`;
+  return `"${timestamp}","${level}","${escaped}"`;
 };
 ```
 
@@ -158,7 +158,7 @@ const emojiFormatter = (level, message) => {
     fatal: '💀'
   };
   const timestamp = new Date().toISOString();
-  return `${emojis[level] || ''} [${timestamp}] ${level.toUpperCase()}: ${message}`;
+  return `${emojis[level] || ''} [${timestamp}] ${level}: ${message}`;
 };
 ```
 
@@ -179,7 +179,7 @@ const jsonlFormatter = (level, message) => {
 ```
 
 ```yaml
-{"ts":1714740493123,"level":"info","message":"Something happened"}
+{"ts":1714740493123,"level":"INFO","message":"Something happened"}
 ```
 
 
