@@ -11,8 +11,8 @@
 	},
 	"files": ["dist", "README.md", "LICENSE"],
 	"scripts": {
-		"test": "vitest run",
-		"coverage": "vitest run --coverage",
+		"test": "npx vitest run",
+		"coverage": "npx vitest run --coverage",
 		"build": "node build.js",
 		"prepare": "npm run build",
 		"release": "standard-version"
