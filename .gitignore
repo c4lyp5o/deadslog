@@ -1,5 +1,5 @@
 node_modules/
 dist/
-test-output.log
+coverage/
 .env
 .DS_Store
