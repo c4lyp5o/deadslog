@@ -20,7 +20,13 @@ import {
 	existsWithRetry,
 	statWithRetry,
 } from "./utils/fileHelpers.js";
-// Default formatter function
+
+/**
+ * Default formatter function for log messages.
+ * @param {string} level - The log level (e.g., "info", "error").
+ * @param {any} message - The log message, which can be of any type.
+ * @returns {string} - A formatted log message string.
+ */
 const defaultFormatter = (level, message) => {
 	switch (typeof message) {
 		case "undefined":
@@ -35,9 +41,23 @@ const defaultFormatter = (level, message) => {
 			return `[${level}] [${new Date().toISOString()}] ${message.toString()}`;
 	}
 };
-// constants
-const MAX_QUEUE_SIZE = 100000; // Maximum size of the write queue
+// Constants
+/**
+ * Maximum size of the write queue.
+ * @constant {number}
+ */
+const MAX_QUEUE_SIZE = 100000;
+
+/**
+ * Valid strategies for handling max log files.
+ * @constant {string[]}
+ */
 const validStrategies = ["deleteOld", "archiveOld"];
+
+/**
+ * Order of log levels.
+ * @constant {string[]}
+ */
 const levelOrder = [
 	"trace",
 	"debug",
@@ -47,8 +67,19 @@ const levelOrder = [
 	"error",
 	"fatal",
 ];
-// Color mapping and compose
+
+/**
+ * Composes two functions to apply transformations.
+ * @param {Function} f - The first function.
+ * @param {Function} g - The second function.
+ * @returns {Function} - A composed function.
+ */
 const compose = (f, g) => (x) => f(g(x));
+
+/**
+ * Map of log levels to their respective colors.
+ * @constant {Object}
+ */
 const colorMap = {
 	trace: compose(greenBright, bgBlack),
 	debug: gray,
@@ -59,9 +90,23 @@ const colorMap = {
 	fatal: compose(bgWhite, red),
 	default: white,
 };
+
 // Global cleanup
+/**
+ * Whether the global cleanup has been attached.
+ * @constant {boolean}
+ */
 let cleanupAttached = false;
+
+/**
+ * A set of active logger instances for cleanup.
+ * @constant {Set<Object>}
+ */
 const activeLoggers = new Set();
+
+/**
+ * Attaches global cleanup handlers for logger instances.
+ */
 const attachGlobalCleanup = () => {
 	if (cleanupAttached) return;
 	const cleanup = async () => {
@@ -79,15 +124,28 @@ const attachGlobalCleanup = () => {
 
 	cleanupAttached = true;
 };
+
 /**
- * Logger Instance
- * @typedef {Object} LoggerInstance
- * @property {Function} debug - Log a debug message.
- * @property {Function} info - Log an info message.
- * @property {Function} success - Log a success message.
- * @property {Function} warn - Log a warning message.
- * @property {Function} error - Log an error message.
- * @property {Function} destroy - Clean up resources.
+ * Logger configuration object.
+ * @typedef {Object} LoggerConfig
+ * @property {Object} consoleOutput - Configuration for console output.
+ * @property {boolean} consoleOutput.enabled - Whether console output is enabled.
+ * @property {boolean} consoleOutput.coloredCoding - Whether to use colored output in the console.
+ * @property {Object} fileOutput - Configuration for file output.
+ * @property {boolean} fileOutput.enabled - Whether file output is enabled.
+ * @property {string} fileOutput.logFilePath - Path to the log file.
+ * @property {boolean} fileOutput.rotate - Whether to rotate log files.
+ * @property {number} fileOutput.maxLogSize - Maximum size of a log file before rotation.
+ * @property {number} fileOutput.maxLogFiles - Maximum number of log files to retain.
+ * @property {string} fileOutput.onMaxLogFilesReached - Strategy for handling max log files.
+ * @property {Function} formatter - Function to format log messages.
+ * @property {string} minLevel - Minimum log level to log.
+ */
+
+/**
+ * Creates a logger instance.
+ * @param {LoggerConfig} config - Configuration for the logger.
+ * @returns {Object} - A logger instance with various logging methods.
  */
 const deadslog = ({
 	consoleOutput = { enabled: true, coloredCoding: true },
