@@ -1,6 +1,7 @@
 # deadslog
 
 [![CI & Publish](https://github.com/c4lyp5o/deadslog/actions/workflows/ci-publish.yml/badge.svg)](https://github.com/c4lyp5o/deadslog/actions/workflows/ci-publish.yml)
+[![codecov](https://codecov.io/gh/c4lyp5o/deadslog/graph/badge.svg?token=CBXCJDUJS9)](https://codecov.io/gh/c4lyp5o/deadslog)
 
 **deadslog** is a dead simple, yet powerful logging library for Node.js.  
 It supports console and file output, log rotation, custom formatting, and graceful shutdown with async-safe queuing.
