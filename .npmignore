@@ -22,3 +22,6 @@ tsconfig.json
 jest.config.*
 .env*
 node_modules/
+
+# Exclude the build output directory
+!dist/
