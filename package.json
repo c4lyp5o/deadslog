@@ -1,16 +1,20 @@
 {
 	"name": "deadslog",
-	"version": "1.1.1",
+	"version": "1.2.0",
 	"description": "A dead simple logger module for Node.js",
-	"main": "index.js",
+	"main": "dist/index.js",
 	"type": "module",
 	"exports": {
 		".": {
-			"import": "./index.js"
+			"import": "./dist/index.js"
 		}
 	},
+	"files": ["dist", "README.md", "LICENSE"],
 	"scripts": {
-		"test": "vitest run",
+		"test": "cd src && vitest run",
+		"coverage": "cd src && vitest run --coverage",
+		"build": "node build.js",
+		"prepare": "npm run build",
 		"release": "standard-version"
 	},
 	"keywords": [
@@ -25,11 +29,16 @@
 	"author": "c4lyp5o",
 	"license": "MIT",
 	"dependencies": {
-		"chalk": "^5.3.0"
+		"yoctocolors": "^2.1.1"
 	},
 	"devDependencies": {
+		"@vitest/coverage-v8": "^3.1.2",
+		"esbuild": "^0.25.3",
 		"standard-version": "^9.5.0",
 		"vitest": "^3.1.2"
+	},
+	"engines": {
+		"node": ">=16.0.0"
 	},
 	"repository": {
 		"type": "git",
