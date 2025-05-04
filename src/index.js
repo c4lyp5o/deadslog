@@ -1,3 +1,10 @@
+/**
+ * A dead simple logger module for Node.js.
+ * Provides console and file-based logging with support for log rotation, custom formatting, and colored output.
+ *
+ * @module deadslog
+ */
+
 import {
 	greenBright,
 	gray,
@@ -13,12 +20,12 @@ import { stat, unlink, rename, writeFile } from "node:fs/promises";
 import { parse, join, resolve, dirname } from "node:path";
 import { gzipSync } from "node:zlib";
 import {
+	existsWithRetry,
+	statWithRetry,
 	mkdirWithRetry,
 	readFileWithRetry,
 	writeFileWithRetry,
 	createWriteStreamWithRetry,
-	existsWithRetry,
-	statWithRetry,
 } from "./utils/fileHelpers.js";
 
 /**
@@ -245,7 +252,6 @@ const deadslog = ({
 		});
 	}
 
-	// Add logic to handle file rotation based on maxSize and maxFile
 	const rotateLogs = async () => {
 		if (isRotating) return;
 		isRotating = true;
@@ -326,7 +332,6 @@ const deadslog = ({
 		}
 	};
 
-	// Write Queue Processor
 	const processWriteQueue = async () => {
 		if (isProcessingQueue) return;
 		isProcessingQueue = true;
@@ -361,7 +366,6 @@ const deadslog = ({
 		isProcessingQueue = false;
 	};
 
-	// File Writer
 	const writeToFile = (message) => {
 		if (!fileStream) {
 			console.warn(
@@ -400,6 +404,20 @@ const deadslog = ({
 		}
 	};
 
+	/**
+	 * Logger instance with logging methods for various levels.
+	 *
+	 * @typedef {Object} LoggerInstance
+	 * @property {Function} trace - Log a trace-level message.
+	 * @property {Function} debug - Log a debug-level message.
+	 * @property {Function} info - Log an info-level message.
+	 * @property {Function} success - Log a success-level message.
+	 * @property {Function} warn - Log a warning-level message.
+	 * @property {Function} error - Log an error-level message.
+	 * @property {Function} fatal - Log a fatal-level message.
+	 * @property {Function} flush - Flush all queued log messages to file.
+	 * @property {Function} destroy - Clean up resources and close the logger.
+	 */
 	const loggerInstance = {
 		trace: (msg) => log("trace", msg),
 		debug: (msg) => log("debug", msg),
