@@ -30,7 +30,11 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
           slug: c4lyp5o/deadslog
+
+      - name: Debug Coverage Directory
+        run: ls -R coverage
 
   publish:
     needs: test
