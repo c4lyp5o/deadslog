@@ -35,7 +35,7 @@ import deadslog from 'deadslog';
 const logger = deadslog({
   consoleOutput: {
     enabled: true,
-    coloredCoding: true
+    coloredCoding: true,
   },
   fileOutput: {
     enabled: true,
@@ -43,21 +43,33 @@ const logger = deadslog({
     rotate: true,
     maxLogSize: 500000, // bytes
     maxLogFiles: 5,
-    onMaxLogFilesReached: 'archiveOld' // or 'deleteOld'
+    onMaxLogFilesReached: 'archiveOld', // Options: 'archiveOld' or 'deleteOld'
   },
-  minLevel: 'debug'
+  minLevel: 'debug', // Minimum log level to record
 });
 
-logger.trace("This is a trace message");
-logger.debug("Debugging info");
-logger.info("General information");
-logger.success("Operation succeeded!");
-logger.warn("Something might be wrong");
-logger.error("An error occurred");
-logger.fatal("Fatal error encountered");
+logger.trace("This is a trace message"); // Trace-level message
+logger.debug("Debugging info"); // Debug-level message
+logger.info("General information"); // Info-level message
+logger.success("Operation succeeded!"); // Success-level message
+logger.warn("Something might be wrong"); // Warning-level message
+logger.error("An error occurred"); // Error-level message
+logger.fatal("Fatal error encountered"); // Fatal-level message
 
-// Optional: Clean shutdown
+// Optional: Clean up resources and shut down the logger gracefully
 await logger.destroy();
+```
+
+### Pro Tip 💡
+For scenarios where only console logging is required, you can use `deadslog` with its default configuration. This eliminates the need for additional setup.
+
+```javascript
+import deadslog from 'deadslog';
+
+const logger = deadslog();
+
+logger.info("This will log to the console with default settings");
+logger.error("Errors will also be displayed in the console");
 ```
 
 
