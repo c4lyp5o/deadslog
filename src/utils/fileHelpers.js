@@ -4,8 +4,6 @@ import {
 	mkdirSync,
 	readFileSync,
 	writeFileSync,
-	renameSync,
-	unlinkSync,
 	createWriteStream,
 } from "node:fs";
 
@@ -71,55 +69,6 @@ export const writeFileWithRetry = (
 			writeFileSync(filePath, content);
 			return;
 		} catch (err) {
-			if (i === retries - 1) throw err;
-			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
-		}
-	}
-};
-
-export const writeFileWithEncodingRetry = (
-	filePath,
-	content = "",
-	encoding = "utf8",
-	retries = 5,
-	delayMs = 100,
-) => {
-	for (let i = 0; i < retries; i++) {
-		try {
-			writeFileSync(filePath, content, encoding);
-			return;
-		} catch (err) {
-			if (i === retries - 1) throw err;
-			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
-		}
-	}
-};
-
-export const renameWithRetry = (
-	oldPath,
-	newPath,
-	retries = 5,
-	delayMs = 100,
-) => {
-	for (let i = 0; i < retries; i++) {
-		try {
-			renameSync(oldPath, newPath);
-			return;
-		} catch (err) {
-			if (err.code !== "ENOENT") throw err;
-			if (i === retries - 1) throw err;
-			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
-		}
-	}
-};
-
-export const unlinkWithRetry = (filePath, retries = 5, delayMs = 100) => {
-	for (let i = 0; i < retries; i++) {
-		try {
-			unlinkSync(filePath);
-			return;
-		} catch (err) {
-			if (err.code !== "ENOENT") throw err;
 			if (i === retries - 1) throw err;
 			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
 		}
