@@ -8,6 +8,7 @@ export default defineConfig({
 			reporter: ["text", "lcov", "html"], // Generate coverage reports in text, lcov, and HTML formats
 			include: ["src/*.js", "src/utils/*.js"], // Include all source files in the `src` directory
 			exclude: ["node_modules", "test", "dist"], // Exclude test files, dependencies, and build files
+			reportsDirectory: "./coverage", // Output directory for coverage reports
 		},
 	},
 });
