@@ -6,7 +6,7 @@ await build({
 	bundle: true,
 	minify: true,
 	platform: "node",
-	target: "node18",
+	target: "node16",
 	format: "esm",
 	sourcemap: false,
 	define: {
