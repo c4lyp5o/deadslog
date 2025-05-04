@@ -12,7 +12,7 @@ It supports console and file output, log rotation, custom formatting, and gracef
 
 - ✅ Console and file logging
 - 🔁 Log rotation (delete or archive old logs)
-- 🎨 Colorized or plain output using `chalk`
+- 🎨 Colorized or plain output using `yoctocolors`
 - ✨ Custom message formatting
 - 🧵 Async-safe log queue with backpressure support
 - 🔒 Graceful shutdown with automatic log flushing
