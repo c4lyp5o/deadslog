@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.2.1] - 2025-05-21
+### Added
+- Added `getMetrics()` method to retrieve log metrics (e.g., total logs, errors).
+- Automatic CommonJS wrapper generation (`dist/index.cjs`) for seamless dual ESM/CJS support.
+- TypeScript type definitions are now generated and included in the published package.
+- JSDoc typedefs and return annotations for full IntelliSense support.
+
+### Changed
+- Changed output format so that only level is colored in console logs.
+- Build process now includes a script to generate the CJS wrapper after every build.
+- Improved `.npmignore` and `.gitignore` recommendations for clean publishing.
+- Updated `package.json` to use `exports` for both ESM and CJS entrypoints, and to include types.
+
+### Fixed
+- No major bug fixes in this release, but improved compatibility and developer experience.
+
 ## [v1.2.0] - 2025-05-04
 ### Added
 - Introduced a new `compose` utility to allow functional composition for color transformations in `colorMap`.
