@@ -90,8 +90,8 @@ Returns a logger instance.
 | `fileOutput.onMaxLogFilesReached` | `string`   | Rotation strategy: `"deleteOld"` or `"archiveOld"`                               |
 | `formatter`                       | `function` | Optional custom formatter for log messages                                       |
 | `minLevel`                        | `string`   | Minimum log level: `trace`, `debug`, `info`, `success`, `warn`, `error`, `fatal` |
-| `filters.include                  | `string`   | Word filter to include from log |
-| `filters.exclude                  | `string`   | Word filter to exclude from log |
+| `filters.include`                  | `string`   | Word filter to include from log |
+| `filters.exclude`                  | `string`   | Word filter to exclude from log |
 
 
 #### 🧰 Logger Methods
