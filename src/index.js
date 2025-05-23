@@ -35,19 +35,48 @@ import {
  * @returns {string} - A formatted log message string.
  */
 const defaultFormatter = (level, message) => {
+	const timestamp = new Date().toISOString();
+
 	switch (typeof message) {
 		case "undefined":
-			return `[${level}] [${new Date().toISOString()}] [Message is undefined]`;
+			return `[${level}] [${timestamp}] - [Message is undefined]`;
 		case "object":
+			if (message === null) {
+				return `[${level}] [${timestamp}] - null`;
+			}
 			try {
-				return `[${level}] [${new Date().toISOString()}] ${JSON.stringify(message)}`;
+				// Handle circular references
+				const cache = new Set();
+				const stringified = JSON.stringify(message, (key, value) => {
+					if (typeof value === "object" && value !== null) {
+						if (cache.has(value)) {
+							return "[Circular Reference]";
+						}
+						cache.add(value);
+					}
+
+					// Special handling for Error objects
+					if (value instanceof Error) {
+						return {
+							message: value.message,
+							name: value.name,
+							stack: value.stack,
+							cause: value.cause,
+						};
+					}
+
+					return value;
+				});
+
+				return `[${level}] [${timestamp}] - ${stringified}`;
 			} catch (err) {
-				return `[${level}] [${new Date().toISOString()}] [Non-serializable object]`;
+				return `[${level}] [${timestamp}] - [Non-serializable object: ${err.message}]`;
 			}
 		default:
-			return `[${level}] [${new Date().toISOString()}] ${message.toString()}`;
+			return `[${level}] [${timestamp}] - ${message.toString()}`;
 	}
 };
+
 // Constants
 /**
  * Maximum size of the write queue.
@@ -147,17 +176,20 @@ const attachGlobalCleanup = () => {
  * @property {string} fileOutput.onMaxLogFilesReached - Strategy for handling max log files.
  * @property {Function} formatter - Function to format log messages.
  * @property {string} minLevel - Minimum log level to log.
+ * @property {Object} filters - Configuration for filters.
+ * @property {string} filters.include - Word filter to include in log.
+ * @property {string} filters.exclude - Word filter to exclude in log.
  */
 
 /**
  * Creates a logger instance.
  * @param {LoggerConfig} config - Configuration for the logger.
- * @returns {Object} - A logger instance with various logging methods.
+ * @returns {LoggerInstance}
  */
 const deadslog = ({
 	consoleOutput = { enabled: true, coloredCoding: true },
 	fileOutput = {
-		enabled: null,
+		enabled: false,
 		logFilePath: null,
 		rotate: null,
 		maxLogSize: null,
@@ -166,44 +198,43 @@ const deadslog = ({
 	},
 	formatter = defaultFormatter,
 	minLevel = "info",
+	filters = {},
 } = {}) => {
+	// console output configuration
 	if (consoleOutput && typeof consoleOutput !== "object")
-		throw new Error("Invalid consoleOutput configuration.");
-	if (consoleOutput.enabled && typeof consoleOutput.enabled !== "boolean")
+		throw new Error("consoleOutput must be an object.");
+	if (typeof consoleOutput.enabled !== "boolean")
 		throw new Error("consoleOutput.enabled must be a boolean.");
-	if (
-		consoleOutput.coloredCoding &&
-		typeof consoleOutput.coloredCoding !== "boolean"
-	)
-		throw new Error("consoleOutput.coloredCoding must be a boolean.");
+	if (consoleOutput.enabled) {
+		if (typeof consoleOutput.coloredCoding !== "undefined")
+			if (typeof consoleOutput.coloredCoding !== "boolean")
+				throw new Error("consoleOutput.coloredCoding must be a boolean.");
+	}
+	// file output configuration
 	if (fileOutput && typeof fileOutput !== "object")
-		throw new Error("Invalid fileOutput configuration.");
-	if (fileOutput.enabled && typeof fileOutput.enabled !== "boolean")
+		throw new Error("fileOutput must be an object.");
+	if (typeof fileOutput.enabled !== "boolean")
 		throw new Error("fileOutput.enabled must be a boolean.");
 	if (fileOutput.enabled) {
 		if (!fileOutput.logFilePath)
 			throw new Error("File logging is enabled but no log file path provided.");
 		if (typeof fileOutput.logFilePath !== "string")
 			throw new Error("fileOutput.logFilePath must be a string.");
-		if (fileOutput.rotate && typeof fileOutput.rotate !== "boolean")
-			throw new Error("fileOutput.rotate must be a boolean.");
-		if (fileOutput.rotate) {
+		// rotate configuration
+		if (typeof fileOutput.rotate !== "undefined") {
+			if (typeof fileOutput.rotate !== "boolean")
+				throw new Error("fileOutput.rotate must be a boolean.");
 			if (
-				!fileOutput.maxLogSize ||
 				typeof fileOutput.maxLogSize !== "number" ||
 				fileOutput.maxLogSize < 1
 			)
-				throw new Error("Invalid maxLogSize for file rotation.");
+				throw new Error("Invalid maxLogSize value for file rotation.");
 			if (
-				!fileOutput.maxLogFiles ||
 				typeof fileOutput.maxLogFiles !== "number" ||
 				fileOutput.maxLogFiles < 1
 			)
-				throw new Error("Invalid maxLogFiles for file rotation.");
-			if (
-				!fileOutput.onMaxLogFilesReached ||
-				typeof fileOutput.onMaxLogFilesReached !== "string"
-			)
+				throw new Error("Invalid maxLogFiles value for file rotation.");
+			if (typeof fileOutput.onMaxLogFilesReached !== "string")
 				throw new Error("Invalid onMaxFilesReached for file rotation.");
 			if (!validStrategies.includes(fileOutput.onMaxLogFilesReached))
 				throw new Error(
@@ -212,21 +243,54 @@ const deadslog = ({
 				);
 		}
 	}
-	if (typeof formatter !== "function") formatter = defaultFormatter;
+	// formatter configuration
+	if (typeof formatter !== "function") {
+		console.warn("Formatter passed is not a function. Using default formatter");
+		formatter = defaultFormatter;
+	}
+	// minLevel configuration
 	if (typeof minLevel !== "string")
 		throw new Error("minLevel must be a string.");
 	if (!levelOrder.includes(minLevel))
 		throw new Error(
 			`Invalid value for minLevel: ${minLevel}. Valid levels are: ${levelOrder.join(", ")}.`,
 		);
+	// filters configuration
+	if (filters && typeof filters !== "object")
+		throw new Error("filters must be an object.");
+	if (typeof filters.include !== "undefined") {
+		if (typeof filters.include !== "string")
+			throw new Error("filters.include must be a string.");
+	}
+	if (typeof filters.exclude !== "undefined") {
+		if (typeof filters.exclude !== "string")
+			throw new Error("filters.exclude must be a string.");
+	}
 
 	// initialization
 	let logFilePath = null;
 	let fileStream = null;
+	let fileSystemFailures = 0;
+	let circuitOpen = false;
+	const circuitResetTimeout = 30000;
 	let isRotating = false;
 	let isProcessingQueue = false;
 	const writeQueue = [];
 	const minLevelIndex = levelOrder.indexOf(minLevel.toLowerCase());
+	const includePattern = filters.include ? new RegExp(filters.include) : null;
+	const excludePattern = filters.exclude ? new RegExp(filters.exclude) : null;
+
+	// metrics
+	const metrics = {
+		messagesLogged: 0,
+		bytesWritten: 0,
+		queueHighWaterMark: 0,
+		writeFailures: 0,
+		averageWriteTime: 0,
+		rotations: 0,
+		lastWriteTime: 0,
+		writeLatencies: [],
+	};
 
 	if (fileOutput.enabled) {
 		logFilePath = resolve(fileOutput.logFilePath);
@@ -338,20 +402,65 @@ const deadslog = ({
 
 		while (writeQueue.length > 0) {
 			const { message, resolve, reject } = writeQueue.shift();
+			if (fileOutput.rotate) await rotateLogs();
 			try {
 				if (!fileStream || fileStream.writableEnded) {
 					console.warn(
 						"[deadslog/system] Attempted to write to closed file stream.",
 					);
 					reject(new Error("File stream is closed."));
-					return;
+					continue;
 				}
-				if (fileOutput.rotate) await rotateLogs();
+
 				fileStream.write(`${message}\n`, (err) => {
 					if (err) {
 						console.error("[deadslog/system] Error writing to log file:", err);
-						return reject(err);
+						fileSystemFailures++;
+
+						if (fileSystemFailures >= 5) {
+							circuitOpen = true;
+							console.error(
+								"[deadslog/system] Circuit breaker opened due to file system failures",
+							);
+
+							// Try to reset circuit after delay
+							setTimeout(() => {
+								console.info(
+									"[deadslog/system] Attempting to reset circuit breaker",
+								);
+								circuitOpen = false;
+								fileSystemFailures = 0;
+
+								// Try to reopen the stream
+								try {
+									if (fileStream) fileStream.end();
+									fileStream = createWriteStreamWithRetry(logFilePath, {
+										flags: "a",
+									});
+									fileStream.on("error", (err) => {
+										console.error(
+											"[deadslog/system] Logging stream error:",
+											err,
+										);
+										fileSystemFailures++;
+									});
+									console.info(
+										"[deadslog/system] Circuit breaker reset successful",
+									);
+								} catch (err) {
+									console.error(
+										"[deadslog/system] Failed to reset circuit breaker:",
+										err,
+									);
+									// Will try again on next write attempt
+								}
+							}, circuitResetTimeout); // Wait 30 seconds before resetting
+						}
+
+						reject(err);
+						return;
 					}
+					fileSystemFailures = 0;
 					resolve();
 				});
 			} catch (err) {
@@ -359,6 +468,7 @@ const deadslog = ({
 					"[deadslog/system] Unexpected error during log write:",
 					err,
 				);
+				fileSystemFailures++;
 				reject(err);
 			}
 		}
@@ -366,22 +476,41 @@ const deadslog = ({
 		isProcessingQueue = false;
 	};
 
-	const writeToFile = (message) => {
-		if (!fileStream) {
-			console.warn(
-				"[deadslog/system] Attempted to write to log file but file stream is closed.",
-			);
-			return Promise.reject(new Error("File stream is closed."));
-		}
+	const writeMetrics = (message) => {
+		metrics.messagesLogged++;
+		metrics.bytesWritten += message.length + 1;
+		metrics.queueHighWaterMark = Math.max(
+			metrics.queueHighWaterMark,
+			writeQueue.length,
+		);
+	};
 
-		if (writeQueue.length >= MAX_QUEUE_SIZE) {
-			return Promise.reject(
-				new Error("Write queue is full. Log message dropped."),
-			);
+	const latencyMetrics = (startTime) => {
+		const latency = Date.now() - startTime;
+		metrics.writeLatencies.push(latency);
+		if (metrics.writeLatencies.length > 100) {
+			metrics.writeLatencies.shift();
 		}
+		metrics.averageWriteTime =
+			metrics.writeLatencies.reduce((a, b) => a + b, 0) /
+			metrics.writeLatencies.length;
+		metrics.lastWriteTime = Date.now();
+	};
 
+	const writeToFile = (message, startTime) => {
 		return new Promise((resolve, reject) => {
-			writeQueue.push({ message, resolve, reject });
+			writeQueue.push({
+				message,
+				resolve: () => {
+					writeMetrics(message);
+					latencyMetrics(startTime);
+					resolve();
+				},
+				reject: (err) => {
+					metrics.writeFailures++;
+					reject(err);
+				},
+			});
 			processWriteQueue();
 		});
 	};
@@ -390,17 +519,58 @@ const deadslog = ({
 		const msgLevelIndex = levelOrder.indexOf(msgLevel);
 		if (msgLevelIndex < minLevelIndex) return;
 
-		const formatted = formatter(msgLevel.toUpperCase(), message);
+		const upperLevel = msgLevel.toUpperCase();
+		const formatted = formatter(upperLevel, message);
+
+		if (excludePattern?.test(formatted)) return;
+		if (includePattern && !includePattern.test(formatted)) return;
 
 		if (consoleOutput.enabled) {
-			const outputMessage = consoleOutput.coloredCoding
-				? colorMap[msgLevel](formatted)
-				: colorMap.default(formatted);
-			console.log(outputMessage);
+			if (consoleOutput.coloredCoding) {
+				const levelStr = upperLevel;
+				const levelIndex = formatted.indexOf(levelStr);
+				let outputMessage;
+				if (levelIndex !== -1) {
+					const before = formatted.slice(0, levelIndex);
+					const after = formatted.slice(levelIndex + levelStr.length);
+					const colorFn = colorMap[msgLevel] || colorMap.default;
+					outputMessage = before + colorFn(levelStr) + after;
+				} else {
+					outputMessage = colorMap.default(formatted);
+				}
+				console.log(outputMessage);
+			} else {
+				console.log(formatted);
+			}
 		}
 
 		if (fileOutput.enabled) {
-			await writeToFile(formatted);
+			if (circuitOpen) {
+				return Promise.reject(
+					new Error("Circuit breaker open: Too many file system failures"),
+				);
+			}
+
+			if (!fileStream) {
+				console.warn(
+					"[deadslog/system] Attempted to write to log file but file stream is closed.",
+				);
+				return Promise.reject(new Error("File stream is closed."));
+			}
+
+			if (writeQueue.length >= MAX_QUEUE_SIZE) {
+				return Promise.reject(
+					new Error("Write queue is full. Log message dropped."),
+				);
+			}
+
+			const startTime = Date.now();
+
+			try {
+				writeToFile(formatted, startTime);
+			} catch (err) {
+				console.error("[deadslog] Failed to write log to file:", err);
+			}
 		}
 	};
 
@@ -408,17 +578,18 @@ const deadslog = ({
 	 * Logger instance with logging methods for various levels.
 	 *
 	 * @typedef {Object} LoggerInstance
-	 * @property {Function} trace - Log a trace-level message.
-	 * @property {Function} debug - Log a debug-level message.
-	 * @property {Function} info - Log an info-level message.
-	 * @property {Function} success - Log a success-level message.
-	 * @property {Function} warn - Log a warning-level message.
-	 * @property {Function} error - Log an error-level message.
-	 * @property {Function} fatal - Log a fatal-level message.
-	 * @property {Function} flush - Flush all queued log messages to file.
-	 * @property {Function} destroy - Clean up resources and close the logger.
+	 * @property {(msg: any) => void} trace - Log a trace-level message.
+	 * @property {(msg: any) => void} debug - Log a debug-level message.
+	 * @property {(msg: any) => void} info - Log an info-level message.
+	 * @property {(msg: any) => void} success - Log a success-level message.
+	 * @property {(msg: any) => void} warn - Log a warning-level message.
+	 * @property {(msg: any) => void} error - Log an error-level message.
+	 * @property {(msg: any) => void} fatal - Log a fatal-level message.
+	 * @property  {() => Promise<void>} flush - Flush all queued log messages to file.
+	 * @property  {() => Promise<void>} destroy - Clean up resources and close the logger.
+	 * @property {(msg: any) => void} getMetrics - Get current file writing operations metrics of the logger.
 	 */
-	const loggerInstance = {
+	const LoggerInstance = {
 		trace: (msg) => log("trace", msg),
 		debug: (msg) => log("debug", msg),
 		info: (msg) => log("info", msg),
@@ -427,40 +598,63 @@ const deadslog = ({
 		error: (msg) => log("error", msg),
 		fatal: (msg) => log("fatal", msg),
 		flush: async () => {
-			if (!fileStream || writeQueue.length === 0) return;
-
-			const pendingWrites = [...writeQueue];
-			writeQueue.length = 0;
-
-			await Promise.allSettled(
-				pendingWrites.map(async ({ message }) => {
-					try {
-						return await writeToFile(message);
-					} catch (err) {
-						console.error("[deadslog/system] Flush write error:", err);
-					}
-				}),
-			);
-
-			fileStream.end();
-			fileStream = createWriteStreamWithRetry(logFilePath, {
-				flags: "a",
-			});
+			if (!fileStream || LoggerInstance._isFlushing) return;
+			LoggerInstance._isFlushing = true;
+			try {
+				while (writeQueue.length > 0) {
+					const pendingWrites = [...writeQueue];
+					writeQueue.length = 0;
+					await Promise.allSettled(
+						pendingWrites.map(async ({ message }) => {
+							try {
+								return await writeToFile(message);
+							} catch (err) {
+								console.error("[deadslog/system] Flush write error:", err);
+							}
+						}),
+					);
+				}
+			} finally {
+				LoggerInstance._isFlushing = false;
+			}
 		},
 		destroy: async () => {
-			await loggerInstance.flush();
-			if (fileStream) {
-				fileStream.end();
-				fileStream = null;
+			LoggerInstance._isDestroyed = true;
+			if (LoggerInstance._isDestroyed) {
+				try {
+					await LoggerInstance.flush();
+					if (fileStream) {
+						await new Promise((resolve, reject) => {
+							fileStream.end((err) => (err ? reject(err) : resolve()));
+						});
+						fileStream = null;
+					}
+					activeLoggers.delete(LoggerInstance);
+				} catch (error) {
+					console.error("[deadslog/system] Error during destroy:", error);
+					throw error;
+				} finally {
+					LoggerInstance._isDestroyed = false;
+				}
 			}
-			activeLoggers.delete(loggerInstance);
+		},
+		getMetrics: () => {
+			if (!fileOutput.enabled)
+				return "fileOutput is disabled. No metrics available";
+			return {
+				...metrics,
+				currentQueueSize: writeQueue.length,
+				isProcessingQueue,
+				isRotating,
+				isFlushing: LoggerInstance._isFlushing || false,
+			};
 		},
 	};
 
-	activeLoggers.add(loggerInstance);
+	activeLoggers.add(LoggerInstance);
 	attachGlobalCleanup();
 
-	return loggerInstance;
+	return LoggerInstance;
 };
 
 export default deadslog;

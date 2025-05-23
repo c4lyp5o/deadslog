@@ -1,21 +1,24 @@
 {
 	"name": "deadslog",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"description": "A dead simple logger module for Node.js",
-	"main": "dist/index.js",
 	"type": "module",
+	"main": "dist/index.cjs",
+	"module": "dist/index.js",
+	"types": "types/index.d.ts",
 	"exports": {
 		".": {
-			"import": "./dist/index.js"
+			"import": "./dist/index.js",
+			"require": "./dist/index.cjs"
 		}
 	},
-	"files": ["dist", "README.md", "LICENSE"],
+	"files": ["dist", "types", "README.md", "LICENSE"],
 	"scripts": {
-		"test": "npx vitest run",
-		"coverage": "npx vitest run --coverage",
-		"build": "node build.js",
-		"prepare": "npm run build",
-		"release": "standard-version"
+		"test": "bunx vitest run",
+		"coverage": "bunx vitest run --coverage",
+		"build": "bun run build.js && bunx tsc && bun scripts/gen-cjs-wrapper.js",
+		"prepare": "bun run build",
+		"release": "bunx standard-version"
 	},
 	"keywords": [
 		"logger",

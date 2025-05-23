@@ -1,9 +1,8 @@
 # Ignore source and build scripts
 src/
 build.js
-*.js
-*.ts
-*.map
+scripts/
+tsconfig.json
 
 # Ignore tests and examples
 test/
@@ -18,10 +17,9 @@ coverage/
 .eslintrc*
 .prettierrc*
 .vitest.*
-tsconfig.json
 jest.config.*
 .env*
-node_modules/
 
-# Exclude the build output directory
+# Always include build output and types
 !dist/
+!types/

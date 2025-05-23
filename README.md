@@ -1,80 +1,82 @@
 # deadslog
 
 [![CI & Publish](https://github.com/c4lyp5o/deadslog/actions/workflows/ci-publish.yml/badge.svg)](https://github.com/c4lyp5o/deadslog/actions/workflows/ci-publish.yml)
+![GitHub issues](https://img.shields.io/github/issues/c4lyp5o/deadslog) 
+![GitHub pull requests](https://img.shields.io/github/issues-pr/c4lyp5o/deadslog)
 [![codecov](https://codecov.io/gh/c4lyp5o/deadslog/graph/badge.svg?token=CBXCJDUJS9)](https://codecov.io/gh/c4lyp5o/deadslog)
+![npm](https://img.shields.io/npm/v/deadslog) 
+![npm](https://img.shields.io/npm/dt/deadslog) 
+![GitHub](https://img.shields.io/github/license/c4lyp5o/deadslog)
 
-**deadslog** is a dead simple, yet powerful logging library for Node.js.  
-It supports console and file output, log rotation, custom formatting, and graceful shutdown with async-safe queuing.
 
----
+A dead simple logger module for Node.js. Provides console and file-based logging with support for log rotation, custom formatting, colored output, and robust error handling.
 
-## 🚀 Features
+## ✨ Features
 
-- ✅ Console and file logging
-- 🔁 Log rotation (delete or archive old logs)
-- 🎨 Colorized or plain output using `yoctocolors`
-- ✨ Custom message formatting
-- 🧵 Async-safe log queue with backpressure support
-- 🔒 Graceful shutdown with automatic log flushing
-
----
+- 🖥 Console and file logging  
+- 🔄 Log rotation with delete/archive strategies  
+- 🧩 Customizable log formatting  
+- 🌈 Colored log levels in console  
+- 🧱 Handles undefined/non-serializable messages  
+- 🧠 TypeScript type definitions included  
+- 🔁 ESM + CommonJS support  
 
 ## 📦 Installation
 
-```bash
+```sh
 npm install deadslog
+# or
+bun add deadslog
 ```
 
-Requires Node.js 16+ (uses native ES modules and async stream pipeline)
+## 🚀 Usage
 
+### 🔹 Basic
+```js
+import deadslog from "deadslog";
+const logger = deadslog();
+logger.info("Hello, world!");
+```
 
-## 🛠️ Usage
-
-```javascript
-import deadslog from 'deadslog';
-
+### 🎨 With Custom Formatter
+```js
 const logger = deadslog({
-  consoleOutput: {
-    enabled: true,
-    coloredCoding: true,
+  formatter: (level, message) => {
+    const timestamp = new Date().toLocaleString();
+    return `---\nTime: ${timestamp}\nLevel: ${level}\nMessage: ${message}\n---`;
   },
+});
+logger.info("Custom formatted log!");
+```
+
+### 📁 File Logging & Rotation
+```js
+const logger = deadslog({
   fileOutput: {
     enabled: true,
-    logFilePath: './logs/app.log',
+    logFilePath: "./logs/app.log",
     rotate: true,
-    maxLogSize: 500000, // bytes
-    maxLogFiles: 5,
-    onMaxLogFilesReached: 'archiveOld', // Options: 'archiveOld' or 'deleteOld'
+    maxLogSize: 1024 * 1024, // 1MB
+    maxLogFiles: 3,
+    onMaxLogFilesReached: "archiveOld", // or "deleteOld"
   },
-  minLevel: 'debug', // Minimum log level to record
 });
-
-logger.trace("This is a trace message"); // Trace-level message
-logger.debug("Debugging info"); // Debug-level message
-logger.info("General information"); // Info-level message
-logger.success("Operation succeeded!"); // Success-level message
-logger.warn("Something might be wrong"); // Warning-level message
-logger.error("An error occurred"); // Error-level message
-logger.fatal("Fatal error encountered"); // Fatal-level message
-
-// Optional: Clean up resources and shut down the logger gracefully
-await logger.destroy();
+logger.info("This will be written to a file!");
 ```
 
-### Pro Tip 💡
-For scenarios where only console logging is required, you can use `deadslog` with its default configuration. This eliminates the need for additional setup.
-
-```javascript
-import deadslog from 'deadslog';
-
+### 📦 CommonJS Usage
+```js
+const deadslog = require("deadslog");
 const logger = deadslog();
-
-logger.info("This will log to the console with default settings");
-logger.error("Errors will also be displayed in the console");
+logger.info("Hello from CJS!");
 ```
 
+## 📘 API
 
-## ⚙️ Configuration Options
+### deadslog(config)
+Returns a logger instance.
+
+#### ⚙️ Configuration Options
 
 | Option                            | Type       | Description                                                                      |
 | --------------------------------- | ---------- | -------------------------------------------------------------------------------- |
@@ -88,31 +90,25 @@ logger.error("Errors will also be displayed in the console");
 | `fileOutput.onMaxLogFilesReached` | `string`   | Rotation strategy: `"deleteOld"` or `"archiveOld"`                               |
 | `formatter`                       | `function` | Optional custom formatter for log messages                                       |
 | `minLevel`                        | `string`   | Minimum log level: `trace`, `debug`, `info`, `success`, `warn`, `error`, `fatal` |
+| `filters.include                  | `string`   | Word filter to include from log |
+| `filters.exclude                  | `string`   | Word filter to exclude from log |
 
 
-## 🧩 Custom Formatter Example
+#### 🧰 Logger Methods
+- `trace(msg)`
+- `debug(msg)`
+- `info(msg)`
+- `success(msg)`
+- `warn(msg)`
+- `error(msg)`
+- `fatal(msg)`
+- `flush()`
+- `destroy()`
 
-```javascript
-const jsonFormatter = (level, message) => {
-  return JSON.stringify({
-    level,
-    timestamp: new Date().toISOString(),
-    message
-  });
-};
-```
-
-To use a formatter:
-
-```javascript
-const logger = deadslog({
-  formatter: jsonFormatter
-});
-```
-
+## 🧠 TypeScript
+Type definitions are included and will be picked up automatically.
 
 ## 📚 Formatter Examples For Use
-
 ### 🧾 1. Simple Timestamp Formatter
 
 ```javascript
@@ -195,7 +191,27 @@ const jsonlFormatter = (level, message) => {
 {"ts":1714740493123,"level":"INFO","message":"Something happened"}
 ```
 
+## Changelog
 
-## 🪪 License
+### [v1.2.1] - 2025-05-24
+#### Added
+- Added `getMetrics()` method to retrieve log metrics (e.g., total logs, errors).
+- Automatic CommonJS wrapper generation (`dist/index.cjs`) for seamless dual ESM/CJS support.
+- TypeScript type definitions are now generated and included in the published package.
+- JSDoc typedefs and return annotations for full IntelliSense support.
 
+#### Changed
+- Changed output format so that only level is colored in console logs.
+- Build process now includes a script to generate the CJS wrapper after every build.
+- Improved `.npmignore` and `.gitignore` recommendations for clean publishing.
+- Updated `package.json` to use `exports` for both ESM and CJS entrypoints, and to include types.
+
+#### Fixed
+- No major bug fixes in this release, but improved compatibility and developer experience.
+
+---
+
+See [CHANGELOG.md](./CHANGELOG.md) for previous versions and more details.
+
+## License
 MIT
