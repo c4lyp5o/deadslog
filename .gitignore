@@ -1,6 +1,7 @@
-node_modules/
-dist/
 coverage/
+dist/
+node_modules/
+types/
 vt/
 .env
 .DS_Store
