@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.2.2] - 2025-05-24
+### Fixed
+- Types file was not included in the package, causing issues for TypeScript users.
+
 ## [v1.2.1] - 2025-05-21
 ### Added
 - Added `getMetrics()` method to retrieve log metrics (e.g., total logs, errors).

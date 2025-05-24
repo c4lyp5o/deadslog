@@ -193,21 +193,9 @@ const jsonlFormatter = (level, message) => {
 
 ## Changelog
 
-### [v1.2.1] - 2025-05-24
-#### Added
-- Added `getMetrics()` method to retrieve log metrics (e.g., total logs, errors).
-- Automatic CommonJS wrapper generation (`dist/index.cjs`) for seamless dual ESM/CJS support.
-- TypeScript type definitions are now generated and included in the published package.
-- JSDoc typedefs and return annotations for full IntelliSense support.
-
-#### Changed
-- Changed output format so that only level is colored in console logs.
-- Build process now includes a script to generate the CJS wrapper after every build.
-- Improved `.npmignore` and `.gitignore` recommendations for clean publishing.
-- Updated `package.json` to use `exports` for both ESM and CJS entrypoints, and to include types.
-
-#### Fixed
-- No major bug fixes in this release, but improved compatibility and developer experience.
+## [v1.2.2] - 2025-05-24
+### Fixed
+- Types file was not included in the package, causing issues for TypeScript users.
 
 ---
 

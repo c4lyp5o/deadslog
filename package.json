@@ -1,6 +1,6 @@
 {
 	"name": "deadslog",
-	"version": "1.2.1",
+	"version": "1.2.2",
 	"description": "A dead simple logger module for Node.js",
 	"type": "module",
 	"main": "dist/index.cjs",
@@ -13,7 +13,12 @@
 			"types": "./types/index.d.ts"
 		}
 	},
-	"files": ["dist", "types", "README.md", "LICENSE"],
+	"files": [
+		"dist",
+		"types",
+		"README.md",
+		"LICENSE"
+	],
 	"scripts": {
 		"test": "bunx vitest run",
 		"coverage": "bunx vitest run --coverage",
