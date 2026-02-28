@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.3.0] - 2026-02-28
+### Changed
+- Default formatter now uses local/system time (instead of UTC `toISOString()`).
+- File rotation now uses in-memory byte tracking for more deterministic rotation behavior under buffered writes.
+
+### Added
+- File output option `maxQueueSize` (defaults to `100000`) to configure the maximum internal write queue size.
+- File output options to control queue-full behavior:
+  - `onQueueFull`: `"drop"` (default) or `"block"`
+  - `queueFullTimeoutMs`: timeout for `"block"` mode
+
+### Fixed
+- Improved shutdown durability: `destroy()`/`flush()` now wait for in-flight log calls to finish enqueueing before closing streams.
+- Prevented race conditions during concurrent stream initialization by serializing file stream opening.
+
 ## [v1.2.2] - 2025-05-24
 ### Fixed
 - Types file was not included in the package, causing issues for TypeScript users.
@@ -47,7 +62,6 @@ All notable changes to this project will be documented in this file.
 ### Notes
 - Reduced filesize from 12.3kb to 7.5kb (60.97% reduction)
 - Backward compatibility is maintained, but developers are encouraged to transition to the updated API and utilize new features for better performance and reliability.
-
 
 ## [v1.1.1] - 2025-05-03
 ### Fixed
