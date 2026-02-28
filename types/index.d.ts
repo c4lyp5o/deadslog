@@ -20,6 +20,8 @@ export type LoggerConfig = {
         maxLogSize: number;
         maxLogFiles: number;
         onMaxLogFilesReached: string;
+        onQueueFull: string;
+        queueFullTimeoutMs: number;
     };
     /**
      * - Function to format log messages.
@@ -50,6 +52,8 @@ export type LoggerConfig = {
  * @property {number} fileOutput.maxLogSize - Maximum size of a log file before rotation.
  * @property {number} fileOutput.maxLogFiles - Maximum number of log files to retain.
  * @property {string} fileOutput.onMaxLogFilesReached - Strategy for handling max log files.
+ * @property {string} fileOutput.onQueueFull - Strategy for handling a full write queue.
+ * @property {number} fileOutput.queueFullTimeoutMs - Timeout in milliseconds for handling a full write queue.
  * @property {Function} formatter - Function to format log messages.
  * @property {string} minLevel - Minimum log level to log.
  * @property {Object} filters - Configuration for filters.
