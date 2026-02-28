@@ -365,24 +365,22 @@ const deadslog = ({
 		const firstStringIndex = args.findIndex((a) => typeof a === "string");
 		if (firstStringIndex !== -1) payload.message = args[firstStringIndex];
 
-		const e = args.find((a) => a instanceof Error);
-		if (e) payload.error = e;
+		const err = args.find((a) => a instanceof Error);
+		if (err) payload.error = err;
 
 		for (let i = 0; i < args.length; i++) {
+			const a = args[i];
 			if (i === firstStringIndex) continue;
-			if (args[i] === e) continue;
-			meta.push(args[i]);
+			if (a === err) continue;
+			meta.push(a);
 		}
 
 		if (meta.length) payload.meta = meta;
 
-		if (typeof payload.message === "undefined" && meta.length > 1) {
+		if (typeof payload.message === "undefined")
 			payload.message = "[Multiple arguments]";
-		}
 
-		return Object.keys(payload).length === 1 && payload.meta
-			? payload.meta
-			: payload;
+		return payload;
 	};
 
 	const openFileStream = async () => {
@@ -752,19 +750,12 @@ const deadslog = ({
 		error: (...args) => safe(log("error", ...args)),
 		fatal: (...args) => safe(log("fatal", ...args)),
 		flush: async () => {
-			const start = Date.now();
 			while (
 				pendingLogs > 0 ||
 				getQueueLength() > 0 ||
 				isProcessingQueue ||
 				isRotating
 			) {
-				if (Date.now() - start > queueFullTimeoutMs) {
-					console.error(
-						"[deadslog/system] Flush timed out. Dropping remaining queued logs.",
-					);
-					break;
-				}
 				await new Promise((resolve) => setTimeout(resolve, 25));
 			}
 		},
