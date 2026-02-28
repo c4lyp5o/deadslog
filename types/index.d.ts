@@ -1,109 +1,206 @@
 export default deadslog;
+export type LogLevel = "trace" | "debug" | "info" | "success" | "warn" | "error" | "fatal";
+export type RotationStrategy = "deleteOld" | "archiveOld";
+export type QueueFullStrategy = "drop" | "block";
+/**
+ * Console output configuration.
+ */
+export type ConsoleOutputConfig = {
+    /**
+     * Whether to log to console.
+     */
+    enabled: boolean;
+    /**
+     * Whether console output uses colors.
+     */
+    coloredCoding?: boolean;
+};
+/**
+ * File output configuration.
+ */
+export type FileOutputConfig = {
+    /**
+     * Whether to log to a file.
+     */
+    enabled: boolean;
+    /**
+     * Path to the log file.
+     */
+    logFilePath: string | null;
+    /**
+     * Whether to rotate log files once they reach `maxLogSize`.
+     */
+    rotate?: boolean;
+    /**
+     * Max file size (bytes) before rotation (required when `rotate` is true).
+     */
+    maxLogSize?: number;
+    /**
+     * Max number of rotated files to keep (required when `rotate` is true).
+     */
+    maxLogFiles?: number;
+    /**
+     * Strategy when max rotated files is reached.
+     */
+    onMaxLogFilesReached?: RotationStrategy;
+    /**
+     * What to do when the internal write queue is full.
+     * - `"drop"`: reject immediately (message dropped; increments droppedMessages metric)
+     * - `"block"`: apply backpressure (wait until queue has room or until timeout)
+     */
+    onQueueFull?: QueueFullStrategy;
+    /**
+     * Max time to wait for queue space in `"block"` mode.
+     */
+    queueFullTimeoutMs?: number;
+    /**
+     * Maximum number of queued file writes before `onQueueFull` applies.
+     */
+    maxQueueSize?: number;
+};
+/**
+ * Formatter function signature.
+ *
+ * Should return a single formatted log line (without a trailing newline).
+ */
+export type LogFormatter = (level: string, message: any) => string;
+/**
+ * Optional include/exclude filters applied to the *formatted* log line.
+ */
+export type LogFilters = {
+    /**
+     * RegExp string. If provided, only matching lines are logged.
+     */
+    include?: string;
+    /**
+     * RegExp string. If provided, matching lines are skipped.
+     */
+    exclude?: string;
+};
 /**
  * Logger configuration object.
  */
 export type LoggerConfig = {
+    consoleOutput?: ConsoleOutputConfig;
+    fileOutput?: FileOutputConfig;
+    formatter?: LogFormatter;
     /**
-     * - Configuration for console output.
+     * Minimum level to log.
      */
-    consoleOutput: {
-        enabled: boolean;
-        coloredCoding: boolean;
-    };
-    /**
-     * - Configuration for file output.
-     */
-    fileOutput: {
-        enabled: boolean;
-        logFilePath: string;
-        rotate: boolean;
-        maxLogSize: number;
-        maxLogFiles: number;
-        onMaxLogFilesReached: string;
-        onQueueFull: string;
-        queueFullTimeoutMs: number;
-    };
-    /**
-     * - Function to format log messages.
-     */
-    formatter: Function;
-    /**
-     * - Minimum log level to log.
-     */
-    minLevel: string;
-    /**
-     * - Configuration for filters.
-     */
-    filters: {
-        include: string;
-        exclude: string;
-    };
+    minLevel?: LogLevel;
+    filters?: LogFilters;
 };
 /**
- * Logger configuration object.
- * @typedef {Object} LoggerConfig
- * @property {Object} consoleOutput - Configuration for console output.
- * @property {boolean} consoleOutput.enabled - Whether console output is enabled.
- * @property {boolean} consoleOutput.coloredCoding - Whether to use colored output in the console.
- * @property {Object} fileOutput - Configuration for file output.
- * @property {boolean} fileOutput.enabled - Whether file output is enabled.
- * @property {string} fileOutput.logFilePath - Path to the log file.
- * @property {boolean} fileOutput.rotate - Whether to rotate log files.
- * @property {number} fileOutput.maxLogSize - Maximum size of a log file before rotation.
- * @property {number} fileOutput.maxLogFiles - Maximum number of log files to retain.
- * @property {string} fileOutput.onMaxLogFilesReached - Strategy for handling max log files.
- * @property {string} fileOutput.onQueueFull - Strategy for handling a full write queue.
- * @property {number} fileOutput.queueFullTimeoutMs - Timeout in milliseconds for handling a full write queue.
- * @property {Function} formatter - Function to format log messages.
- * @property {string} minLevel - Minimum log level to log.
- * @property {Object} filters - Configuration for filters.
- * @property {string} filters.include - Word filter to include in log.
- * @property {string} filters.exclude - Word filter to exclude in log.
+ * Metrics returned by `getMetrics()` when file output is enabled.
  */
+export type LoggerMetrics = {
+    /**
+     * Total messages successfully written to file.
+     */
+    messagesLogged: number;
+    /**
+     * Total bytes written to file (approx).
+     */
+    bytesWritten: number;
+    /**
+     * Max observed queue size.
+     */
+    queueHighWaterMark: number;
+    /**
+     * Total file write failures (includes drops).
+     */
+    writeFailures: number;
+    /**
+     * Moving average write latency in ms.
+     */
+    averageWriteTime: number;
+    /**
+     * Number of file rotations performed.
+     */
+    rotations: number;
+    /**
+     * Unix ms timestamp of last successful write.
+     */
+    lastWriteTime: number;
+    /**
+     * Number of dropped messages due to full queue (drop mode).
+     */
+    droppedMessages: number;
+    /**
+     * Last seen file-related error message (if any).
+     */
+    lastFileError: string | null;
+    /**
+     * Current in-memory byte count for active log file.
+     */
+    currentFileBytes: number;
+    /**
+     * Current queued writes waiting to be processed.
+     */
+    currentQueueSize: number;
+    /**
+     * Whether the queue worker is active.
+     */
+    isProcessingQueue: boolean;
+    /**
+     * Whether rotation is in progress.
+     */
+    isRotating: boolean;
+};
 /**
- * Creates a logger instance.
- * @param {LoggerConfig} config - Configuration for the logger.
- * @returns {LoggerInstance}
+ * Logger instance returned by {@link deadslog}.
+ *
+ * Logging methods are fire-and-forget (they do not throw); internal failures are reported
+ * via `getMetrics()` and internal console errors.
+ *
+ * Each log method supports variadic arguments like `console.log`.
+ * Example: `logger.error("something failed", e, { requestId })`
  */
-declare function deadslog({ consoleOutput, fileOutput, formatter, minLevel, filters, }?: LoggerConfig): {
+export type LoggerInstance = {
     /**
-     * - Log a trace-level message.
+     * Log a trace-level message.
      */
-    trace: (msg: any) => void;
+    trace: (...args: any[]) => void;
     /**
-     * - Log a debug-level message.
+     * Log a debug-level message.
      */
-    debug: (msg: any) => void;
+    debug: (...args: any[]) => void;
     /**
-     * - Log an info-level message.
+     * Log an info-level message.
      */
-    info: (msg: any) => void;
+    info: (...args: any[]) => void;
     /**
-     * - Log a success-level message.
+     * Log a success-level message.
      */
-    success: (msg: any) => void;
+    success: (...args: any[]) => void;
     /**
-     * - Log a warning-level message.
+     * Log a warning-level message.
      */
-    warn: (msg: any) => void;
+    warn: (...args: any[]) => void;
     /**
-     * - Log an error-level message.
+     * Log an error-level message.
      */
-    error: (msg: any) => void;
+    error: (...args: any[]) => void;
     /**
-     * - Log a fatal-level message.
+     * Log a fatal-level message.
      */
-    fatal: (msg: any) => void;
+    fatal: (...args: any[]) => void;
     /**
-     * - Flush all queued log messages to file.
+     * Wait until all queued writes (and in-flight log calls) complete.
      */
     flush: () => Promise<void>;
     /**
-     * - Clean up resources and close the logger.
+     * Flush and close the underlying file stream.
      */
     destroy: () => Promise<void>;
     /**
-     * - Get current file writing operations metrics of the logger.
+     * Get file writer metrics, or a message if file output is disabled.
      */
-    getMetrics: (msg: any) => void;
+    getMetrics: () => (LoggerMetrics | string);
 };
+/**
+ * Creates a logger instance.
+ * @param {LoggerConfig} [config]
+ * @returns {LoggerInstance}
+ */
+declare function deadslog({ consoleOutput, fileOutput, formatter, minLevel, filters, }?: LoggerConfig): LoggerInstance;
