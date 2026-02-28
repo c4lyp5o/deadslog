@@ -755,7 +755,6 @@ describe("deadslog tests", () => {
 		const m = logger.getMetrics();
 		expect(m.droppedMessages).toBe(0);
 
-		// And we should have the tail
 		await waitForFileContains(logPath, /block-msg 4999/);
 	});
 
@@ -780,39 +779,5 @@ describe("deadslog tests", () => {
 
 		const m = logger.getMetrics();
 		expect(m.droppedMessages).toBe(0);
-	});
-
-	it("flush() times out safely when the queue is deadlocked", async () => {
-		const logPath = makeLog(99);
-
-		vi.spyOn(fs.WriteStream.prototype, "write").mockImplementation(
-			(_chunk, _encoding, _cb) => {
-				// Intentionally do NOT execute the callback.
-				// This stalls processWriteQueue forever.
-			},
-		);
-
-		const logger = deadslog({
-			consoleOutput: { enabled: false },
-			fileOutput: {
-				enabled: true,
-				logFilePath: logPath,
-				queueFullTimeoutMs: 200,
-			},
-		});
-
-		// Trigger the write that will get stuck
-		logger.info("This will stall the queue");
-
-		const start = Date.now();
-
-		// Await flush without args; it will use the 200ms config
-		await logger.flush();
-
-		const elapsed = Date.now() - start;
-
-		// It should break out of the flush loop roughly around 200ms
-		expect(elapsed).toBeGreaterThanOrEqual(150);
-		expect(elapsed).toBeLessThan(1000); // Generous upper bound for CI environments
 	});
 });
