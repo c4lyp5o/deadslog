@@ -195,6 +195,8 @@ const jsonlFormatter = (level, message) => {
 
 ## [v1.3.0] - 2026-02-28
 ### Changed
+- fileOutput.rotate is now truly optional (defaults to false); rotation thresholds are validated only when rotate: true.
+- When fileOutput.enabled is false, other fileOutput.* options are ignored (no validation).
 - Default formatter now uses local/system time (instead of UTC `toISOString()`).
 - File rotation now uses in-memory byte tracking for more deterministic rotation behavior under buffered writes.
 
@@ -207,6 +209,7 @@ const jsonlFormatter = (level, message) => {
 ### Fixed
 - Improved shutdown durability: `destroy()`/`flush()` now wait for in-flight log calls to finish enqueueing before closing streams.
 - Prevented race conditions during concurrent stream initialization by serializing file stream opening.
+- Rotation edge case: a single log entry larger than maxLogSize no longer triggers rotation churn (oversize line is written; rotation happens on a subsequent write).
 
 ---
 
