@@ -8,7 +8,6 @@
 ![npm](https://img.shields.io/npm/dt/deadslog) 
 ![GitHub](https://img.shields.io/github/license/c4lyp5o/deadslog)
 
-
 A dead simple logger module for Node.js. Provides console and file-based logging with support for log rotation, custom formatting, colored output, and robust error handling.
 
 ## ✨ Features
@@ -31,7 +30,14 @@ bun add deadslog
 
 ## 🚀 Usage
 
-### 🔹 Basic
+### 🔹 CommonJS
+```js
+const deadslog = require("deadslog");
+const logger = deadslog();
+logger.info("Hello, world!");
+```
+
+### 🔹 ESM
 ```js
 import deadslog from "deadslog";
 const logger = deadslog();
@@ -64,13 +70,6 @@ const logger = deadslog({
 logger.info("This will be written to a file!");
 ```
 
-### 📦 CommonJS Usage
-```js
-const deadslog = require("deadslog");
-const logger = deadslog();
-logger.info("Hello from CJS!");
-```
-
 ## 📘 API
 
 ### deadslog(config)
@@ -78,21 +77,23 @@ Returns a logger instance.
 
 #### ⚙️ Configuration Options
 
-| Option                            | Type       | Description                                                                      |
-| --------------------------------- | ---------- | -------------------------------------------------------------------------------- |
-| `consoleOutput.enabled`           | `boolean`  | Enable console logging (default: `true`)                                         |
-| `consoleOutput.coloredCoding`     | `boolean`  | Enable colored output using `chalk` (default: `true`)                            |
-| `fileOutput.enabled`              | `boolean`  | Enable file logging (default: `false`)                                           |
-| `fileOutput.logFilePath`          | `string`   | File path for log output (required if file logging is enabled)                   |
-| `fileOutput.rotate`               | `boolean`  | Enable automatic log file rotation                                               |
-| `fileOutput.maxLogSize`           | `number`   | Maximum log file size in bytes before rotation                                   |
-| `fileOutput.maxLogFiles`          | `number`   | Number of rotated files to keep                                                  |
-| `fileOutput.onMaxLogFilesReached` | `string`   | Rotation strategy: `"deleteOld"` or `"archiveOld"`                               |
-| `formatter`                       | `function` | Optional custom formatter for log messages                                       |
-| `minLevel`                        | `string`   | Minimum log level: `trace`, `debug`, `info`, `success`, `warn`, `error`, `fatal` |
-| `filters.include`                  | `string`   | Word filter to include from log |
-| `filters.exclude`                  | `string`   | Word filter to exclude from log |
-
+| Option                            | Type       | Description |
+| --------------------------------- | ---------- | ----------- |
+| `consoleOutput.enabled`           | `boolean`  | Enable console logging (default: `true`) |
+| `consoleOutput.coloredCoding`     | `boolean`  | Enable colored output using `yoctocolors` (default: `true`) |
+| `fileOutput.enabled`              | `boolean`  | Enable file logging (default: `false`) |
+| `fileOutput.logFilePath`          | `string`   | File path for log output (**required** if `fileOutput.enabled` is `true`) |
+| `fileOutput.rotate`               | `boolean`  | Enable automatic log file rotation (default: `false`) |
+| `fileOutput.maxLogSize`           | `number`   | Maximum log file size in bytes before rotation (**required** if `fileOutput.rotate` is `true`) |
+| `fileOutput.maxLogFiles`          | `number`   | Number of rotated files to keep (**required** if `fileOutput.rotate` is `true`) |
+| `fileOutput.onMaxLogFilesReached` | `string`   | Rotation strategy: `"deleteOld"` or `"archiveOld"` (**required** if `fileOutput.rotate` is `true`) |
+| `fileOutput.maxQueueSize`         | `number`   | Maximum number of queued file writes before queue-full strategy applies (default: `100000`) |
+| `fileOutput.onQueueFull`          | `string`   | Queue-full strategy: `"drop"` (default) or `"block"` |
+| `fileOutput.queueFullTimeoutMs`   | `number`   | Max time (ms) to wait for queue space when `onQueueFull: "block"` (default: `5000`) |
+| `formatter`                       | `function` | Optional custom formatter for log messages |
+| `minLevel`                        | `string`   | Minimum log level: `trace`, `debug`, `info`, `success`, `warn`, `error`, `fatal` (default: `info`) |
+| `filters.include`                 | `string`   | RegExp string; if provided, only matching formatted lines are logged |
+| `filters.exclude`                 | `string`   | RegExp string; if provided, matching formatted lines are skipped |
 
 #### 🧰 Logger Methods
 - `trace(msg)`
