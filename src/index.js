@@ -406,7 +406,7 @@ const deadslog = ({
 		stream.on("error", (e) => {
 			lastFileError = e;
 			fileSystemFailures++;
-			console.error("[deadslog/system] Logging stream error:", e);
+			console.error("[deadslog/system] Logging stream error");
 		});
 
 		fileStream = stream;
@@ -511,13 +511,12 @@ const deadslog = ({
 			await ensureFileStream();
 		} catch (e) {
 			lastFileError = e;
-			console.error("[deadslog/system] Error during log rotation:", e);
+			console.error("[deadslog/system] Error during log rotation");
 			try {
 				if (fileOutput.enabled && !fileStream) await ensureFileStream();
 			} catch (e) {
 				console.error(
-					"[deadslog/system] Failed to reopen stream after rotation:",
-					e,
+					"[deadslog/system] Failed to reopen stream after rotation",
 				);
 			}
 		} finally {
@@ -625,7 +624,7 @@ const deadslog = ({
 					lastFileError = e;
 					fileSystemFailures++;
 					metrics.writeFailures++;
-					console.error("[deadslog/system] Error writing to log file:", e);
+					console.error("[deadslog/system] Error writing to log file");
 
 					try {
 						await closeFileStream();
@@ -683,7 +682,7 @@ const deadslog = ({
 			writeQueue.push({ message, startTime, resolve, reject });
 			processWriteQueue().catch((e) => {
 				lastFileError = e;
-				console.error("[deadslog/system] Queue processor failed:", e);
+				console.error("[deadslog/system] Queue processor failed");
 			});
 		});
 	};
@@ -737,7 +736,7 @@ const deadslog = ({
 	const safe = (p) => {
 		return Promise.resolve(p).catch((e) => {
 			lastFileError = e;
-			console.error("[deadslog/system] Log write failed:", e);
+			console.error("[deadslog/system] Log write failed");
 		});
 	};
 
