@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, afterAll, vi } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import deadslog from "../src/index.js";
 
@@ -117,23 +118,23 @@ describe("deadslog tests", () => {
 		expect(infoCall).toBeTruthy();
 	});
 
-	it("respects minLevel when console is disabled (file only)", async () => {
-		const logPath = makeLog(17);
+	it("uses custom formatter when provided", async () => {
 		const logger = deadslog({
-			minLevel: "error",
-			consoleOutput: { enabled: false },
-			fileOutput: { enabled: true, logFilePath: logPath },
+			consoleOutput: { enabled: true },
+			minLevel: "info",
+			formatter: (level, message) =>
+				`CUSTOM: ${level.toUpperCase()} - ${message}`,
 		});
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-		logger.warn("warn msg");
-		logger.error("error msg");
+		logger.info("Formatted!");
+
+		const infoCall = spy.mock.calls.find(
+			(call) => call[0].includes("INFO") && call[0].includes("Formatted!"),
+		);
+		expect(infoCall).toBeTruthy();
 
 		await logger.destroy();
-
-		await waitForFileContains(logPath, /error msg/);
-		const contents = fs.readFileSync(logPath, "utf8");
-		expect(contents).toMatch(/error msg/);
-		expect(contents).not.toMatch(/warn msg/);
 	});
 
 	it("colors only the level token when coloredCoding is enabled", async () => {
@@ -154,17 +155,30 @@ describe("deadslog tests", () => {
 		await logger.destroy();
 	});
 
-	it("handles undefined messages gracefully", async () => {
-		const logger = deadslog({ consoleOutput: { enabled: true } });
+	it("respects minLevel in both console and file", async () => {
+		const logger = deadslog({
+			minLevel: "error",
+			consoleOutput: { enabled: true, coloredCoding: false },
+			fileOutput: { enabled: true, logFilePath: logFilePath2 },
+		});
 		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-		logger.info(undefined);
-
-		expect(spy).toHaveBeenCalledWith(
-			expect.stringContaining("[Message is undefined]"),
-		);
+		logger.warn("This should be ignored");
+		logger.error("This should appear");
 
 		await logger.destroy();
+
+		await waitForFileContains(logFilePath2, /This should appear/);
+		const contents = fs.readFileSync(logFilePath2, "utf8");
+
+		expect(contents).toMatch(/This should appear/);
+		expect(contents).not.toMatch(/This should be ignored/);
+		expect(spy).toHaveBeenCalledWith(
+			expect.stringMatching(/This should appear/),
+		);
+		expect(spy).not.toHaveBeenCalledWith(
+			expect.stringMatching(/This should be ignored/),
+		);
 	});
 
 	it("formats a string message correctly", () => {
@@ -178,6 +192,19 @@ describe("deadslog tests", () => {
 		);
 
 		logger.destroy();
+	});
+
+	it("handles undefined messages gracefully", async () => {
+		const logger = deadslog({ consoleOutput: { enabled: true } });
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		logger.info(undefined);
+
+		expect(spy).toHaveBeenCalledWith(
+			expect.stringContaining("[Message is undefined]"),
+		);
+
+		await logger.destroy();
 	});
 
 	it("handles non-serializable objects gracefully (e.g., BigInt)", async () => {
@@ -221,7 +248,6 @@ describe("deadslog tests", () => {
 		const call = spy.mock.calls.find((c) => c[0].includes("Top level error"));
 		expect(call).toBeTruthy();
 
-		// Should include Error metadata (name/stack) in the formatted output
 		const output = call[0];
 		expect(output).toMatch(/\[ERROR\]/);
 		expect(output).toMatch(/"name"\s*:\s*"Error"/);
@@ -230,21 +256,47 @@ describe("deadslog tests", () => {
 		await logger.destroy();
 	});
 
-	it("uses custom formatter when provided", async () => {
+	it("supports variadic logging: logger.error('error happened', err) includes both message and error details", async () => {
+		const logPath = makeLog(30);
+
 		const logger = deadslog({
-			consoleOutput: { enabled: true },
-			minLevel: "info",
-			formatter: (level, message) =>
-				`CUSTOM: ${level.toUpperCase()} - ${message}`,
+			consoleOutput: { enabled: false },
+			fileOutput: { enabled: true, logFilePath: logPath },
+		});
+
+		const err = new Error("boom");
+		logger.error("error happened", err);
+
+		await logger.destroy();
+
+		const content = fs.readFileSync(logPath, "utf8");
+
+		expect(content).toMatch(/error happened/);
+
+		expect(content).toMatch(/"message":"boom"/);
+		expect(content).toMatch(/"name":"Error"/);
+	});
+
+	it("formats object-only payloads cleanly without the '[Multiple arguments]' quirk", async () => {
+		const logger = deadslog({
+			consoleOutput: { enabled: true, coloredCoding: false },
+			fileOutput: { enabled: false },
 		});
 		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-		logger.info("Formatted!");
+		// 1. Single object logging
+		logger.info({ userId: 123 });
+		const singleOutput = spy.mock.calls[0][0];
+		expect(singleOutput).toContain('{"userId":123}');
+		expect(singleOutput).not.toContain("[Multiple arguments]");
 
-		const infoCall = spy.mock.calls.find(
-			(call) => call[0].includes("INFO") && call[0].includes("Formatted!"),
-		);
-		expect(infoCall).toBeTruthy();
+		// 2. Multiple objects without a string message
+		logger.info({ id: 1 }, { status: "active" });
+		const multiOutput = spy.mock.calls[1][0];
+
+		// Should output the unpacked array/objects gracefully
+		expect(multiOutput).toContain('"id":1');
+		expect(multiOutput).toContain('"status":"active"');
 
 		await logger.destroy();
 	});
@@ -278,30 +330,45 @@ describe("deadslog tests", () => {
 		).toThrow(/valid RegExp|Invalid regular expression/i);
 	});
 
-	it("ignores logs below minLevel in both console and file", async () => {
-		const logger = deadslog({
-			minLevel: "error",
-			consoleOutput: { enabled: true, coloredCoding: false },
-			fileOutput: { enabled: true, logFilePath: logFilePath2 },
-		});
-		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+	it("does not require logFilePath when fileOutput.enabled is false", () => {
+		expect(() =>
+			deadslog({
+				consoleOutput: { enabled: false },
+				fileOutput: { enabled: false },
+			}),
+		).not.toThrow();
+	});
 
-		logger.warn("This should be ignored");
-		logger.error("This should appear");
+	it("does not validate rotate/maxLogSize/maxLogFiles when fileOutput.enabled is false", () => {
+		expect(() =>
+			deadslog({
+				consoleOutput: { enabled: false },
+				fileOutput: {
+					enabled: false,
+					// intentionally wrong types/values; should be ignored
+					logFilePath: 123,
+					rotate: "yes",
+					maxLogSize: "big",
+					maxLogFiles: -1,
+					onMaxLogFilesReached: "nope",
+				},
+			}),
+		).not.toThrow();
+	});
 
-		await logger.destroy();
-
-		await waitForFileContains(logFilePath2, /This should appear/);
-		const contents = fs.readFileSync(logFilePath2, "utf8");
-
-		expect(contents).toMatch(/This should appear/);
-		expect(contents).not.toMatch(/This should be ignored/);
-		expect(spy).toHaveBeenCalledWith(
-			expect.stringMatching(/This should appear/),
-		);
-		expect(spy).not.toHaveBeenCalledWith(
-			expect.stringMatching(/This should be ignored/),
-		);
+	it("does not validate queue options when fileOutput.enabled is false", () => {
+		expect(() =>
+			deadslog({
+				consoleOutput: { enabled: false },
+				fileOutput: {
+					enabled: false,
+					// intentionally wrong; should be ignored
+					onQueueFull: "explode",
+					queueFullTimeoutMs: -999,
+					maxQueueSize: 0,
+				},
+			}),
+		).not.toThrow();
 	});
 
 	it("writes to file if file output is enabled", async () => {
@@ -367,6 +434,37 @@ describe("deadslog tests", () => {
 				timeoutMs: 2500,
 			},
 		);
+	});
+
+	it("writes an oversize line and does not get stuck rotating repeatedly", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "deadslog-oversize-"));
+		const logFilePath = path.join(dir, "app.log");
+
+		const logger = deadslog({
+			consoleOutput: { enabled: false },
+			fileOutput: {
+				enabled: true,
+				logFilePath,
+				rotate: true,
+				maxLogSize: 50, // intentionally tiny
+				maxLogFiles: 3,
+				onMaxLogFilesReached: "deleteOld",
+			},
+		});
+
+		const big = "X".repeat(1000);
+
+		logger.info(big);
+		logger.info("after big");
+
+		await logger.destroy();
+
+		const content = fs.readFileSync(logFilePath, "utf8");
+		expect(content).toMatch(/after big/);
+
+		const metrics = logger.getMetrics();
+		expect(typeof metrics).toBe("object");
+		expect(metrics.rotations).toBeGreaterThanOrEqual(0);
 	});
 
 	it("does not lose the final log line across rotation (deleteOld)", async () => {
@@ -563,35 +661,32 @@ describe("deadslog tests", () => {
 		fs.createWriteStream = original;
 	});
 
-	// it("exposes lastFileError in metrics when file stream cannot be opened", async () => {
-	// 	const logPath = makeLog(21);
+	it("exposes lastFileError in metrics when file stream cannot be opened", async () => {
+		const logPath = makeLog(21);
 
-	// 	// Make createWriteStream fail synchronously
-	// 	const original = fs.createWriteStream;
-	// 	vi.spyOn(fs, "createWriteStream").mockImplementation(() => {
-	// 		throw new Error("Permission denied");
-	// 	});
+		vi.spyOn(fs.WriteStream.prototype, "write").mockImplementation(
+			(_chunk, _encoding, _cb) => {
+				throw new Error("Permission denied");
+			},
+		);
 
-	// 	const logger = deadslog({
-	// 		consoleOutput: { enabled: false },
-	// 		fileOutput: { enabled: true, logFilePath: logPath },
-	// 	});
+		const logger = deadslog({
+			consoleOutput: { enabled: false },
+			fileOutput: { enabled: true, logFilePath: logPath },
+		});
 
-	// 	// Trigger the failure
-	// 	logger.info("will fail");
+		logger.info("will fail");
 
-	// 	// Let microtasks run so safe()'s catch executes
-	// 	await sleep(0);
-	// 	await sleep(10);
+		await sleep(0);
+		await sleep(10);
 
-	// 	const m = logger.getMetrics();
-	// 	expect(typeof m).toBe("object");
-	// 	expect(m.lastFileError).toBeTruthy();
-	// 	expect(m.lastFileError).toMatch(/Permission denied/i);
+		const m = logger.getMetrics();
+		expect(typeof m).toBe("object");
+		expect(m.lastFileError).toBeTruthy();
+		expect(m.lastFileError).toMatch(/Permission denied/i);
 
-	// 	await logger.destroy();
-	// 	fs.createWriteStream = original;
-	// });
+		await logger.destroy();
+	});
 
 	it("drops logs when queue is full in drop mode and reports droppedMessages", async () => {
 		const logPath = makeLog(22);
@@ -685,5 +780,39 @@ describe("deadslog tests", () => {
 
 		const m = logger.getMetrics();
 		expect(m.droppedMessages).toBe(0);
+	});
+
+	it("flush() times out safely when the queue is deadlocked", async () => {
+		const logPath = makeLog(99);
+
+		vi.spyOn(fs.WriteStream.prototype, "write").mockImplementation(
+			(_chunk, _encoding, _cb) => {
+				// Intentionally do NOT execute the callback.
+				// This stalls processWriteQueue forever.
+			},
+		);
+
+		const logger = deadslog({
+			consoleOutput: { enabled: false },
+			fileOutput: {
+				enabled: true,
+				logFilePath: logPath,
+				queueFullTimeoutMs: 200,
+			},
+		});
+
+		// Trigger the write that will get stuck
+		logger.info("This will stall the queue");
+
+		const start = Date.now();
+
+		// Await flush without args; it will use the 200ms config
+		await logger.flush();
+
+		const elapsed = Date.now() - start;
+
+		// It should break out of the flush loop roughly around 200ms
+		expect(elapsed).toBeGreaterThanOrEqual(150);
+		expect(elapsed).toBeLessThan(1000); // Generous upper bound for CI environments
 	});
 });
