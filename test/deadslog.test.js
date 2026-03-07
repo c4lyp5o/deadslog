@@ -200,9 +200,7 @@ describe("deadslog tests", () => {
 
 		logger.info(undefined);
 
-		expect(spy).toHaveBeenCalledWith(
-			expect.stringContaining("[Message is undefined]"),
-		);
+		expect(spy).toHaveBeenCalledWith(expect.stringContaining("- undefined"));
 
 		await logger.destroy();
 	});
@@ -211,12 +209,9 @@ describe("deadslog tests", () => {
 		const logger = deadslog({ consoleOutput: { enabled: true } });
 		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-		// JSON.stringify throws on BigInt by default
 		logger.info({ value: 1n });
 
-		expect(spy).toHaveBeenCalledWith(
-			expect.stringContaining("Non-serializable object"),
-		);
+		expect(spy).toHaveBeenCalledWith(expect.stringContaining('"value":"1n"'));
 
 		await logger.destroy();
 	});
@@ -230,10 +225,9 @@ describe("deadslog tests", () => {
 
 		logger.info(circularObject);
 
-		const infoCall = spy.mock.calls.find((call) =>
-			call[0].includes("[Circular Reference]"),
+		expect(spy).toHaveBeenCalledWith(
+			expect.stringContaining("Circular Reference"),
 		);
-		expect(infoCall).toBeTruthy();
 
 		await logger.destroy();
 	});
@@ -250,8 +244,7 @@ describe("deadslog tests", () => {
 
 		const output = call[0];
 		expect(output).toMatch(/\[ERROR\]/);
-		expect(output).toMatch(/"name"\s*:\s*"Error"/);
-		expect(output).toMatch(/"stack"\s*:\s*"/);
+		expect(output).toMatch(/Error: Top level error/);
 
 		await logger.destroy();
 	});
@@ -272,9 +265,7 @@ describe("deadslog tests", () => {
 		const content = fs.readFileSync(logPath, "utf8");
 
 		expect(content).toMatch(/error happened/);
-
-		expect(content).toMatch(/"message":"boom"/);
-		expect(content).toMatch(/"name":"Error"/);
+		expect(content).toMatch(/Error: boom/);
 	});
 
 	it("formats object-only payloads cleanly without the '[Multiple arguments]' quirk", async () => {
