@@ -137,68 +137,32 @@ const levelOrder = [
 	"error",
 	"fatal",
 ];
-const compose = (f, g) => (x) => f(g(x));
 const colorMap = {
-	trace: compose(greenBright, bgBlack),
+	trace: (s) => greenBright(bgBlack(s)),
 	debug: gray,
 	info: blue,
 	success: green,
 	warn: yellow,
 	error: red,
-	fatal: compose(bgWhite, red),
+	fatal: (s) => bgWhite(red(s)),
 	default: white,
 };
-const defaultFormatter = (level, message) => {
+const pad = (n, w = 2) => String(n).padStart(w, "0");
+const timestampNow = () => {
 	const now = new Date();
-
-	const pad = (n, w = 2) => String(n).padStart(w, "0");
-	const timestamp =
+	return (
 		`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
 		`${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.` +
-		`${pad(now.getMilliseconds(), 3)}`;
-
-	if (message instanceof Error) {
-		const payload = {
-			message: message.message,
-			name: message.name,
-			stack: message.stack,
-			cause: message.cause,
-		};
-		return `[${level}] [${timestamp}] - ${JSON.stringify(payload)}`;
-	}
-
-	switch (typeof message) {
-		case "undefined":
-			return `[${level}] [${timestamp}] - [Message is undefined]`;
-		case "object":
-			if (message === null) {
-				return `[${level}] [${timestamp}] - null`;
-			}
-			try {
-				const cache = new Set();
-				const stringified = JSON.stringify(message, (key, value) => {
-					if (typeof value === "object" && value !== null) {
-						if (cache.has(value)) return "[Circular Reference]";
-						cache.add(value);
-					}
-					if (value instanceof Error) {
-						return {
-							message: value.message,
-							name: value.name,
-							stack: value.stack,
-							cause: value.cause,
-						};
-					}
-					return value;
-				});
-
-				return `[${level}] [${timestamp}] - ${stringified}`;
-			} catch (e) {
-				return `[${level}] [${timestamp}] - [Non-serializable object: ${e?.message ?? String(e)}]`;
-			}
-		default:
-			return `[${level}] [${timestamp}] - ${message.toString()}`;
-	}
+		`${pad(now.getMilliseconds(), 3)}`
+	);
+};
+const defaultFormatter = (level, message) =>
+	`[${level}] [${timestampNow()}] - ${String(message)}`;
+const assert = (cond, msg) => {
+	if (!cond) throw new Error(msg);
+};
+const ignoreENOENT = (e) => {
+	if (e?.code !== "ENOENT") throw e;
 };
 
 /**
@@ -213,88 +177,98 @@ const deadslog = ({
 	minLevel = "info",
 	filters = {},
 } = {}) => {
-	// console output configuration
-	if (consoleOutput && typeof consoleOutput !== "object")
-		throw new Error("consoleOutput must be an object.");
-	if (typeof consoleOutput.enabled !== "boolean")
-		throw new Error("consoleOutput.enabled must be a boolean.");
-	if (consoleOutput.enabled) {
-		if (typeof consoleOutput.coloredCoding !== "undefined")
-			if (typeof consoleOutput.coloredCoding !== "boolean")
-				throw new Error("consoleOutput.coloredCoding must be a boolean.");
+	// --- validate ---
+	assert(
+		!consoleOutput || typeof consoleOutput === "object",
+		"consoleOutput must be an object.",
+	);
+	assert(
+		typeof consoleOutput.enabled === "boolean",
+		"consoleOutput.enabled must be a boolean.",
+	);
+	if (
+		consoleOutput.enabled &&
+		typeof consoleOutput.coloredCoding !== "undefined"
+	) {
+		assert(
+			typeof consoleOutput.coloredCoding === "boolean",
+			"consoleOutput.coloredCoding must be a boolean.",
+		);
 	}
-	// file output configuration
-	if (fileOutput && typeof fileOutput !== "object")
-		throw new Error("fileOutput must be an object.");
-	if (typeof fileOutput.enabled !== "boolean")
-		throw new Error("fileOutput.enabled must be a boolean.");
-	if (fileOutput.enabled === true) {
-		// required
-		if (!fileOutput.logFilePath)
-			throw new Error("File logging is enabled but no log file path provided.");
-		if (typeof fileOutput.logFilePath !== "string")
-			throw new Error("fileOutput.logFilePath must be a string.");
-		// effective defaults (do not mutate input)
+	assert(
+		!fileOutput || typeof fileOutput === "object",
+		"fileOutput must be an object.",
+	);
+	assert(
+		typeof fileOutput.enabled === "boolean",
+		"fileOutput.enabled must be a boolean.",
+	);
+	if (fileOutput.enabled) {
+		assert(
+			fileOutput.logFilePath,
+			"File logging is enabled but no log file path provided.",
+		);
+		assert(
+			typeof fileOutput.logFilePath === "string",
+			"fileOutput.logFilePath must be a string.",
+		);
 		const rotate = fileOutput.rotate ?? false;
 		const onQueueFull = fileOutput.onQueueFull ?? "drop";
 		const queueFullTimeoutMs = fileOutput.queueFullTimeoutMs ?? 5000;
-		if (typeof rotate !== "boolean")
-			throw new Error("fileOutput.rotate must be a boolean.");
-		if (onQueueFull !== "drop" && onQueueFull !== "block")
-			throw new Error('fileOutput.onQueueFull must be "drop" or "block".');
-		if (typeof queueFullTimeoutMs !== "number" || queueFullTimeoutMs < 0)
-			throw new Error(
-				"fileOutput.queueFullTimeoutMs must be a non-negative number.",
-			);
+		assert(typeof rotate === "boolean", "fileOutput.rotate must be a boolean.");
+		assert(
+			onQueueFull === "drop" || onQueueFull === "block",
+			'fileOutput.onQueueFull must be "drop" or "block".',
+		);
+		assert(
+			typeof queueFullTimeoutMs === "number" && queueFullTimeoutMs >= 0,
+			"fileOutput.queueFullTimeoutMs must be a non-negative number.",
+		);
 		if (typeof fileOutput.maxQueueSize !== "undefined") {
-			if (
-				typeof fileOutput.maxQueueSize !== "number" ||
-				!Number.isFinite(fileOutput.maxQueueSize) ||
-				fileOutput.maxQueueSize < 1
-			) {
-				throw new Error(
-					"fileOutput.maxQueueSize must be a positive finite number.",
-				);
-			}
+			assert(
+				typeof fileOutput.maxQueueSize === "number" &&
+					Number.isFinite(fileOutput.maxQueueSize) &&
+					fileOutput.maxQueueSize >= 1,
+				"fileOutput.maxQueueSize must be a positive finite number.",
+			);
 		}
-		if (rotate === true) {
-			if (
-				typeof fileOutput.maxLogSize !== "number" ||
-				fileOutput.maxLogSize < 1
-			)
-				throw new Error("Invalid maxLogSize value for file rotation.");
-			if (
-				typeof fileOutput.maxLogFiles !== "number" ||
-				fileOutput.maxLogFiles < 1
-			)
-				throw new Error("Invalid maxLogFiles value for file rotation.");
-			if (typeof fileOutput.onMaxLogFilesReached !== "string")
-				throw new Error("Invalid onMaxFilesReached for file rotation.");
-			if (!validStrategies.includes(fileOutput.onMaxLogFilesReached))
-				throw new Error(
-					`Invalid value for onMaxLogFilesReached: "${fileOutput.onMaxLogFilesReached}". ` +
-						`Valid values are: ${validStrategies.join(", ")}.`,
-				);
+		if (rotate) {
+			assert(
+				typeof fileOutput.maxLogSize === "number" && fileOutput.maxLogSize >= 1,
+				"Invalid maxLogSize value for file rotation.",
+			);
+			assert(
+				typeof fileOutput.maxLogFiles === "number" &&
+					fileOutput.maxLogFiles >= 1,
+				"Invalid maxLogFiles value for file rotation.",
+			);
+			assert(
+				typeof fileOutput.onMaxLogFilesReached === "string",
+				"Invalid onMaxFilesReached for file rotation.",
+			);
+			assert(
+				validStrategies.includes(fileOutput.onMaxLogFilesReached),
+				`Invalid value for onMaxLogFilesReached: "${fileOutput.onMaxLogFilesReached}". ` +
+					`Valid values are: ${validStrategies.join(", ")}.`,
+			);
 		}
 	}
-	// formatter configuration
 	if (typeof formatter !== "function") {
 		console.warn("Formatter passed is not a function. Using default formatter");
 		formatter = defaultFormatter;
 	}
-	// minLevel configuration
-	if (typeof minLevel !== "string")
-		throw new Error("minLevel must be a string.");
-	if (!levelOrder.includes(minLevel))
-		throw new Error(
-			`Invalid value for minLevel: ${minLevel}. Valid levels are: ${levelOrder.join(", ")}.`,
-		);
-	// filters configuration
+	assert(typeof minLevel === "string", "minLevel must be a string.");
+	assert(
+		levelOrder.includes(minLevel),
+		`Invalid value for minLevel: ${minLevel}. Valid levels are: ${levelOrder.join(", ")}.`,
+	);
 	let includePattern = null;
 	let excludePattern = null;
 	if (typeof filters.include !== "undefined") {
-		if (typeof filters.include !== "string")
-			throw new Error("filters.include must be a string.");
+		assert(
+			typeof filters.include === "string",
+			"filters.include must be a string.",
+		);
 		try {
 			includePattern = new RegExp(filters.include);
 		} catch (e) {
@@ -302,8 +276,10 @@ const deadslog = ({
 		}
 	}
 	if (typeof filters.exclude !== "undefined") {
-		if (typeof filters.exclude !== "string")
-			throw new Error("filters.exclude must be a string.");
+		assert(
+			typeof filters.exclude === "string",
+			"filters.exclude must be a string.",
+		);
 		try {
 			excludePattern = new RegExp(filters.exclude);
 		} catch (e) {
@@ -317,7 +293,6 @@ const deadslog = ({
 	const logFilePath = fileOutput.enabled
 		? resolve(fileOutput.logFilePath)
 		: null;
-	// A single log entry may exceed maxLogSize; in that case it will be written, and rotation will occur on the next write.
 	const maxLogSize = rotate ? fileOutput.maxLogSize : null;
 	const onQueueFull = fileOutput.enabled
 		? (fileOutput.onQueueFull ?? "drop")
@@ -342,7 +317,6 @@ const deadslog = ({
 	let fileSystemFailures = 0;
 	const maxFileSystemFailures = 5;
 	let isDestroyed = false;
-
 	// metrics
 	const metrics = {
 		messagesLogged: 0,
@@ -356,31 +330,41 @@ const deadslog = ({
 		_writeLatencySum: 0,
 	};
 
-	const buildPayloadFromArgs = (args) => {
-		if (args.length <= 1) return args[0];
+	const buildPayloadFromArgs = (args) =>
+		args
+			.map((a) => {
+				if (a instanceof Error) return a.stack || a.toString();
+				if (a === null) return "null";
+				if (a === undefined) return "undefined";
+				if (typeof a === "bigint") return `${a}n`;
+				if (typeof a === "string") return a;
+				if (typeof a !== "object") return String(a);
 
-		const payload = {};
-		const meta = [];
+				const seen = new WeakSet();
+				try {
+					return JSON.stringify(a, (_k, v) => {
+						if (typeof v === "bigint") return `${v}n`;
+						if (typeof v === "object" && v) {
+							if (seen.has(v)) return "[Circular Reference]";
+							seen.add(v);
+						}
+						return v;
+					});
+				} catch {
+					return "[Non-serializable]";
+				}
+			})
+			.join(" ");
 
-		const firstStringIndex = args.findIndex((a) => typeof a === "string");
-		if (firstStringIndex !== -1) payload.message = args[firstStringIndex];
+	const getQueueLength = () => writeQueue.length - queueHead;
 
-		const err = args.find((a) => a instanceof Error);
-		if (err) payload.error = err;
-
-		for (let i = 0; i < args.length; i++) {
-			const a = args[i];
-			if (i === firstStringIndex) continue;
-			if (a === err) continue;
-			meta.push(a);
+	const notifyQueueWaiters = () => {
+		if (queueWaiters.length === 0) return;
+		if (getQueueLength() < maxQueueSize) {
+			const waiters = queueWaiters;
+			queueWaiters = [];
+			for (const w of waiters) w.resolve();
 		}
-
-		if (meta.length) payload.meta = meta;
-
-		if (typeof payload.message === "undefined")
-			payload.message = "[Multiple arguments]";
-
-		return payload;
 	};
 
 	const openFileStream = async () => {
@@ -388,7 +372,6 @@ const deadslog = ({
 		if (fileStream && !fileStream.writableEnded) return;
 
 		const logFileDir = dirname(logFilePath);
-
 		await mkdir(logFileDir, { recursive: true });
 		try {
 			const st = await stat(logFilePath);
@@ -442,17 +425,26 @@ const deadslog = ({
 		});
 	};
 
+	const shiftRotatedFiles = async ({ dir, name, ext, max, suffix }) => {
+		for (let i = max - 1; i >= 1; i--) {
+			const src = join(dir, `${name}.${i}${ext}${suffix}`);
+			const dest = join(dir, `${name}.${i + 1}${ext}${suffix}`);
+			try {
+				await rename(src, dest);
+			} catch (e) {
+				ignoreENOENT(e);
+			}
+		}
+	};
+
 	const rotateLogs = async (force = false) => {
-		if (!rotate) return;
-		if (isRotating) return;
-		if (!logFilePath) return;
+		if (!rotate || isRotating || !logFilePath) return;
 
 		isRotating = true;
 		try {
 			if (!force && currentFileBytes < maxLogSize) return;
 
 			metrics.rotations++;
-
 			await closeFileStream();
 
 			const { dir, name, ext } = parse(logFilePath);
@@ -462,40 +454,35 @@ const deadslog = ({
 				try {
 					await unlink(oldest);
 				} catch (e) {
-					if (e?.code !== "ENOENT") throw e;
+					ignoreENOENT(e);
 				}
 
-				for (let i = fileOutput.maxLogFiles - 1; i >= 1; i--) {
-					const src = join(dir, `${name}.${i}${ext}`);
-					const dest = join(dir, `${name}.${i + 1}${ext}`);
-					try {
-						await rename(src, dest);
-					} catch (e) {
-						if (e?.code !== "ENOENT") throw e;
-					}
-				}
+				await shiftRotatedFiles({
+					dir,
+					name,
+					ext,
+					max: fileOutput.maxLogFiles,
+					suffix: "",
+				});
 
-				const newLogFile = join(dir, `${name}.1${ext}`);
-				await rename(logFilePath, newLogFile);
+				await rename(logFilePath, join(dir, `${name}.1${ext}`));
 				await writeFile(logFilePath, "", "utf8");
 				currentFileBytes = 0;
-			} else if (fileOutput.onMaxLogFilesReached === "archiveOld") {
+			} else {
 				const oldest = join(dir, `${name}.${fileOutput.maxLogFiles}${ext}.gz`);
 				try {
 					await unlink(oldest);
 				} catch (e) {
-					if (e?.code !== "ENOENT") throw e;
+					ignoreENOENT(e);
 				}
 
-				for (let i = fileOutput.maxLogFiles - 1; i >= 1; i--) {
-					const src = join(dir, `${name}.${i}${ext}.gz`);
-					const dest = join(dir, `${name}.${i + 1}${ext}.gz`);
-					try {
-						await rename(src, dest);
-					} catch (e) {
-						if (e?.code !== "ENOENT") throw e;
-					}
-				}
+				await shiftRotatedFiles({
+					dir,
+					name,
+					ext,
+					max: fileOutput.maxLogFiles,
+					suffix: ".gz",
+				});
 
 				const compressedPath = join(dir, `${name}.1${ext}.gz`);
 				await pipeline(
@@ -514,7 +501,7 @@ const deadslog = ({
 			console.error("[deadslog/system] Error during log rotation");
 			try {
 				if (fileOutput.enabled && !fileStream) await ensureFileStream();
-			} catch (e) {
+			} catch {
 				console.error(
 					"[deadslog/system] Failed to reopen stream after rotation",
 				);
@@ -547,18 +534,6 @@ const deadslog = ({
 				: metrics._writeLatencySum / metrics.writeLatencies.length;
 
 		metrics.lastWriteTime = Date.now();
-	};
-
-	const getQueueLength = () => writeQueue.length - queueHead;
-
-	const notifyQueueWaiters = () => {
-		if (queueWaiters.length === 0) return;
-		const len = getQueueLength();
-		if (len < maxQueueSize) {
-			const waiters = queueWaiters;
-			queueWaiters = [];
-			for (const w of waiters) w.resolve();
-		}
 	};
 
 	const processWriteQueue = async () => {
@@ -596,9 +571,8 @@ const deadslog = ({
 						rotate &&
 						currentFileBytes > 0 &&
 						currentFileBytes + lineBytes >= maxLogSize
-					) {
+					)
 						await rotateLogs(true);
-					}
 
 					await ensureFileStream();
 					if (!fileStream || fileStream.writableEnded) {
@@ -707,11 +681,7 @@ const deadslog = ({
 					const colorFn = colorMap[msgLevel] || colorMap.default;
 					const bracketedLevel = `[${upperLevel}]`;
 					const coloredBracket = `[${colorFn(upperLevel)}]`;
-					const outputMessage = formatted.replace(
-						bracketedLevel,
-						coloredBracket,
-					);
-					console.log(outputMessage);
+					console.log(formatted.replace(bracketedLevel, coloredBracket));
 				} else {
 					console.log(formatted);
 				}
@@ -726,19 +696,18 @@ const deadslog = ({
 				throw e;
 			}
 
-			const startTime = Date.now();
-			return enqueueWrite(formatted, startTime);
+			const fileFormatted = formatted.replace(/\r?\n/g, "\\n");
+			return enqueueWrite(fileFormatted, Date.now());
 		} finally {
 			pendingLogs--;
 		}
 	};
 
-	const safe = (p) => {
-		return Promise.resolve(p).catch((e) => {
+	const safe = (p) =>
+		Promise.resolve(p).catch((e) => {
 			lastFileError = e;
 			console.error("[deadslog/system] Log write failed");
 		});
-	};
 
 	const LoggerInstance = {
 		trace: (...args) => safe(log("trace", ...args)),
@@ -754,9 +723,8 @@ const deadslog = ({
 				getQueueLength() > 0 ||
 				isProcessingQueue ||
 				isRotating
-			) {
+			)
 				await new Promise((resolve) => setTimeout(resolve, 25));
-			}
 		},
 		destroy: async () => {
 			if (isDestroyed) return;
