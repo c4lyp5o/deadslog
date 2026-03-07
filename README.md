@@ -70,6 +70,10 @@ const logger = deadslog({
 logger.info("This will be written to a file!");
 ```
 
+For **file output**, deadslog escapes real newline characters (`\n` / `\r\n`) into the two-character sequence `\\n` so that **each log call produces exactly one physical line** in the log file (better for rotation, grep, CSV/JSONL parsing, and log shippers).
+
+Console output is unchanged and will display multiline stack traces.
+
 ## 📘 API
 
 ### deadslog(config)
@@ -145,7 +149,7 @@ Message: Connected to database
 ```javascript
 const csvFormatter = (level, message) => {
   const timestamp = new Date().toISOString();
-  const escaped = message.replace(/"/g, '""');
+  const escaped = message.replace(/\r?\n/g, "\\n").replace(/"/g, '""');
   return `"${timestamp}","${level}","${escaped}"`;
 };
 ```
@@ -159,13 +163,13 @@ const csvFormatter = (level, message) => {
 ```javascript
 const emojiFormatter = (level, message) => {
   const emojis = {
-    trace: '🔍',
-    debug: '🐛',
-    info: 'ℹ️',
-    success: '✅',
-    warn: '⚠️',
-    error: '❌',
-    fatal: '💀'
+    TRACE: '🔍',
+    DEBUG: '🐛',
+    INFO: 'ℹ️',
+    SUCCESS: '✅',
+    WARN: '⚠️',
+    ERROR: '❌',
+    FATAL: '💀'
   };
   const timestamp = new Date().toISOString();
   return `${emojis[level] || ''} [${timestamp}] ${level}: ${message}`;
@@ -192,25 +196,31 @@ const jsonlFormatter = (level, message) => {
 {"ts":1714740493123,"level":"INFO","message":"Something happened"}
 ```
 
+## Why deadslog?
+
+deadslog is a small, console-friendly logger for Node.js that focuses on *robust file logging* without the complexity of a full logging framework.
+
+It keeps the ergonomics of `console.log(...args)` (variadic arguments, readable output, optional colored levels), but adds production-minded behavior that many lightweight loggers skip:
+
+- **Durable shutdown**: `flush()` / `destroy()` wait for in-flight logs, queued writes, and rotations to finish.
+- **File rotation**: rotate by size and keep a configurable number of files, with either **delete old** or **gzip archive** strategies.
+- **Backpressure control**: choose whether a full write queue should **drop** logs (and track it) or **block** with a timeout.
+- **Simple formatting** by default, with a custom formatter hook when you want full control.
+
+If you need high-throughput structured JSON logging and an ecosystem of transports/bindings, you’ll likely want something like Pino or Winston. If you want a dead-simple API with reliable console + file logging, deadslog is built for that.
+
 ## Changelog
 
-## [v1.3.0] - 2026-02-28
+## [v1.3.1] - 2026-03-08
 ### Changed
-- fileOutput.rotate is now truly optional (defaults to false); rotation thresholds are validated only when rotate: true.
-- When fileOutput.enabled is false, other fileOutput.* options are ignored (no validation).
-- Default formatter now uses local/system time (instead of UTC `toISOString()`).
-- File rotation now uses in-memory byte tracking for more deterministic rotation behavior under buffered writes.
-
-### Added
-- File output option `maxQueueSize` (defaults to `100000`) to configure the maximum internal write queue size.
-- File output options to control queue-full behavior:
-  - `onQueueFull`: `"drop"` (default) or `"block"`
-  - `queueFullTimeoutMs`: timeout for `"block"` mode
-
-### Fixed
-- Improved shutdown durability: `destroy()`/`flush()` now wait for in-flight log calls to finish enqueueing before closing streams.
-- Prevented race conditions during concurrent stream initialization by serializing file stream opening.
-- Rotation edge case: a single log entry larger than maxLogSize no longer triggers rotation churn (oversize line is written; rotation happens on a subsequent write).
+- Logging payloads are now built from variadic arguments in the exact order supplied (console-like behavior).
+- The logger now stringifies non-string payload parts more readably, including:
+  - `undefined` → `"undefined"`
+  - `BigInt` values → string form with `n` suffix (e.g. `1n`)
+  - circular references → `"[Circular Reference]"`
+  - non-serializable objects → `"[Non-serializable]"`
+- `defaultFormatter` now treats the incoming `message` as a pre-built string payload (stringification happens during payload building).
+- File output now escapes newline characters (`\n`/`\r\n`) as `\\n` to ensure one log entry per line (console output remains multiline for stack traces).
 
 ---
 

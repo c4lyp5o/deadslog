@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.3.1] - 2026-03-08
+### Changed
+- Logging payloads are now built from variadic arguments in the exact order supplied (console-like behavior).
+- The logger now stringifies non-string payload parts more readably, including:
+  - `undefined` → `"undefined"`
+  - `BigInt` values → string form with `n` suffix (e.g. `1n`)
+  - circular references → `"[Circular Reference]"`
+  - non-serializable objects → `"[Non-serializable]"`
+- `defaultFormatter` now treats the incoming `message` as a pre-built string payload (stringification happens during payload building).
+- File output now escapes newline characters (`\n`/`\r\n`) as `\\n` to ensure one log entry per line (console output remains multiline for stack traces).
+
 ## [v1.3.0] - 2026-02-28
 ### Changed
 - fileOutput.rotate is now truly optional (defaults to false); rotation thresholds are validated only when rotate: true.
