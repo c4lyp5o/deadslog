@@ -66,8 +66,12 @@ jobs:
       - name: Setup Node (for npm publish)
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
+
+      # Trusted publishing (OIDC, no token) needs npm >= 11.5.1
+      - name: Update npm
+        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -75,10 +79,9 @@ jobs:
       - name: Build (dist + types)
         run: bun run build
 
+      # Authenticates via npm trusted publishing (id-token: write); provenance is attached automatically
       - name: Publish to npm
         run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
