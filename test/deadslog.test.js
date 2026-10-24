@@ -771,4 +771,32 @@ describe("deadslog tests", () => {
 		const m = logger.getMetrics();
 		expect(m.droppedMessages).toBe(0);
 	});
+
+	it("records finite write latencies when flushing a pending queue", async () => {
+		const logPath = makeLog(24);
+		const logger = deadslog({
+			consoleOutput: { enabled: false },
+			fileOutput: {
+				enabled: true,
+				logFilePath: logPath,
+				rotate: true,
+				maxLogSize: 300,
+				maxLogFiles: 2,
+				onMaxLogFilesReached: "deleteOld",
+			},
+		});
+
+		// Rotation suspends the drain loop, so this synchronous burst stays queued
+		// and is handed to flush() rather than written by the normal path.
+		for (let i = 0; i < 25; i++) logger.info(`Flush latency ${i}`);
+
+		await logger.flush();
+
+		const metrics = logger.getMetrics();
+		expect(metrics.writeLatencies.length).toBeGreaterThan(0);
+		expect(metrics.writeLatencies.every(Number.isFinite)).toBe(true);
+		expect(Number.isFinite(metrics.averageWriteTime)).toBe(true);
+
+		await logger.destroy();
+	});
 });
