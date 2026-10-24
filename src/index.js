@@ -5,16 +5,7 @@
  * @module deadslog
  */
 
-import {
-	greenBright,
-	gray,
-	blue,
-	green,
-	yellow,
-	red,
-	bgBlack,
-	bgWhite,
-} from "yoctocolors";
+import tty from "node:tty";
 import { createReadStream, createWriteStream } from "node:fs";
 import { stat, unlink, rename, writeFile, mkdir } from "node:fs/promises";
 import { parse, join, resolve, dirname } from "node:path";
@@ -137,26 +128,61 @@ const levelOrder = [
 	"error",
 	"fatal",
 ];
-const colorMap = {
-	trace: (s) => greenBright(bgBlack(s)),
-	debug: gray,
-	info: blue,
-	success: green,
-	warn: yellow,
-	error: red,
-	fatal: (s) => bgWhite(red(s)),
+// Honours NO_COLOR, FORCE_COLOR and TERM.
+const hasColors = tty.WriteStream.prototype.hasColors?.() ?? false;
+// SGR [open, close] pairs per level, innermost first.
+const levelStyles = {
+	trace: [
+		[40, 49],
+		[92, 39],
+	],
+	debug: [[90, 39]],
+	info: [[34, 39]],
+	success: [[32, 39]],
+	warn: [[33, 39]],
+	error: [[31, 39]],
+	fatal: [
+		[31, 39],
+		[47, 49],
+	],
 };
+const paint = (text, styles) =>
+	hasColors
+		? styles.reduce((s, [open, close]) => `\x1b[${open}m${s}\x1b[${close}m`, text)
+		: text;
+// Only the level word is colored, so every tag can be built once up front.
+const levelTags = Object.fromEntries(
+	levelOrder.map((level) => {
+		const upper = level.toUpperCase();
+		return [
+			level,
+			{
+				upper,
+				plain: `[${upper}]`,
+				colored: `[${paint(upper, levelStyles[level])}]`,
+			},
+		];
+	}),
+);
 const maxFileSystemFailures = 5;
 const circuitResetMs = 30000;
 const latencyWindow = 100;
+const maxBatchBytes = 64 * 1024;
 const pad = (n, w = 2) => String(n).padStart(w, "0");
+// Bursts log many lines per millisecond, so the formatted string is reused until the clock moves.
+let lastStampMs = -1;
+let lastStamp = "";
 const timestampNow = () => {
-	const now = new Date();
-	return (
-		`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
-		`${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.` +
-		`${pad(now.getMilliseconds(), 3)}`
-	);
+	const ms = Date.now();
+	if (ms !== lastStampMs) {
+		const now = new Date(ms);
+		lastStampMs = ms;
+		lastStamp =
+			`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
+			`${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.` +
+			`${pad(now.getMilliseconds(), 3)}`;
+	}
+	return lastStamp;
 };
 const defaultFormatter = (level, message) =>
 	`[${level}] [${timestampNow()}] - ${String(message)}`;
@@ -167,7 +193,6 @@ const isObject = (v) => v !== null && typeof v === "object";
 const ignoreENOENT = (e) => {
 	if (e?.code !== "ENOENT") throw e;
 };
-const resolvedPromise = () => Promise.resolve();
 
 const stringifyArg = (a) => {
 	if (a instanceof Error) return a.stack || a.toString();
@@ -431,11 +456,9 @@ const deadslog = ({
 		}
 	};
 
-	const recordWrite = (lineBytes, startTime) => {
-		const now = Date.now();
-		const latency = now - startTime;
+	const recordWrite = (bytes, latency, now) => {
 		metrics.messagesLogged++;
-		metrics.bytesWritten += lineBytes;
+		metrics.bytesWritten += bytes;
 		metrics.lastWriteTime = now;
 		metrics.writeLatencies.push(latency);
 		writeLatencySum += latency;
@@ -445,10 +468,11 @@ const deadslog = ({
 		metrics.averageWriteTime = writeLatencySum / metrics.writeLatencies.length;
 	};
 
-	const recordFailure = (e) => {
+	const recordFailure = (e, count) => {
 		lastFileError = e;
-		metrics.writeFailures++;
-		if (++fileSystemFailures >= maxFileSystemFailures) {
+		metrics.writeFailures += count;
+		fileSystemFailures += count;
+		if (fileSystemFailures >= maxFileSystemFailures) {
 			circuitRetryAt = Date.now() + circuitResetMs;
 		}
 	};
@@ -458,22 +482,40 @@ const deadslog = ({
 	const isCircuitOpen = () =>
 		fileSystemFailures >= maxFileSystemFailures && Date.now() < circuitRetryAt;
 
-	const writeLine = (line) =>
-		new Promise((resolve, reject) => {
-			fileStream.write(line, (e) => (e ? reject(e) : resolve()));
+	// Takes as many queued lines as fit in one write without crossing the rotation limit.
+	const takeBatch = () => {
+		const batch = [];
+		let bytes = 0;
+		while (getQueueLength() > 0 && bytes < maxBatchBytes) {
+			const next = writeQueue[queueHead].bytes;
+			if (
+				batch.length > 0 &&
+				rotate &&
+				currentFileBytes + bytes + next >= maxLogSize
+			)
+				break;
+			batch.push(dequeue());
+			bytes += next;
+		}
+		return batch;
+	};
+
+	const writeBatch = (batch) => {
+		let chunk = "";
+		for (const { message } of batch) chunk += `${message}\n`;
+		return new Promise((resolve, reject) => {
+			fileStream.write(chunk, (e) => (e ? reject(e) : resolve()));
 		});
+	};
 
 	const processWriteQueue = async () => {
-		if (isProcessingQueue) return;
 		isProcessingQueue = true;
 
 		try {
 			while (getQueueLength() > 0) {
-				const { message, startTime, resolve, reject } = dequeue();
-
 				if (isCircuitOpen()) {
 					metrics.writeFailures++;
-					reject(
+					dequeue().reject(
 						new Error(
 							"Too many file system failures; logging paused until the circuit breaker resets.",
 						),
@@ -481,31 +523,36 @@ const deadslog = ({
 					continue;
 				}
 
+				let batch = [];
 				try {
-					const lineBytes = Buffer.byteLength(message, "utf8") + 1;
-
+					await ensureFileStream();
 					if (
 						rotate &&
 						currentFileBytes > 0 &&
-						currentFileBytes + lineBytes >= maxLogSize
-					)
+						currentFileBytes + writeQueue[queueHead].bytes >= maxLogSize
+					) {
 						await rotateLogs();
-
-					await ensureFileStream();
+						await ensureFileStream();
+					}
 					if (!fileStream?.writable)
 						throw new Error("File stream is not writable.");
 
-					await writeLine(`${message}\n`);
+					batch = takeBatch();
+					await writeBatch(batch);
 
 					fileSystemFailures = 0;
-					currentFileBytes += lineBytes;
-					recordWrite(lineBytes, startTime);
-					resolve();
+					const now = Date.now();
+					for (const item of batch) {
+						currentFileBytes += item.bytes;
+						recordWrite(item.bytes, now - item.startTime, now);
+						item.resolve();
+					}
 				} catch (e) {
-					recordFailure(e);
+					if (batch.length === 0) batch = [dequeue()];
+					recordFailure(e, batch.length);
 					console.error("[deadslog/system] Error writing to log file");
 					await closeFileStream().catch(() => {});
-					reject(e);
+					for (const item of batch) item.reject(e);
 				}
 			}
 		} finally {
@@ -531,73 +578,102 @@ const deadslog = ({
 			queueWaiters.push(waiter);
 		});
 
-	const enqueueWrite = async (message, startTime) => {
-		if (isQueueFull()) {
-			if (onQueueFull !== "block") {
-				droppedMessages++;
-				metrics.writeFailures++;
-				throw new Error("Write queue is full. Log message dropped.");
-			}
-			await waitForQueueSpace();
-			reservedSlots--;
-		}
-
-		return new Promise((resolve, reject) => {
-			writeQueue.push({ message, startTime, resolve, reject });
+	const pushWrite = (message, startTime) =>
+		new Promise((resolve, reject) => {
+			writeQueue.push({
+				message,
+				bytes: Buffer.byteLength(message, "utf8") + 1,
+				startTime,
+				resolve,
+				reject,
+			});
 			metrics.queueHighWaterMark = Math.max(
 				metrics.queueHighWaterMark,
 				getQueueLength(),
 			);
+			if (isProcessingQueue) return;
 			processWriteQueue().catch((e) => {
 				lastFileError = e;
 				console.error("[deadslog/system] Queue processor failed");
 			});
 		});
-	};
 
-	const log = async (level, args) => {
-		if (isDestroyed) return;
-
-		const upperLevel = level.toUpperCase();
-		const formatted = formatter(upperLevel, args.map(stringifyArg).join(" "));
-
-		if (excludePattern?.test(formatted)) return;
-		if (includePattern && !includePattern.test(formatted)) return;
-
-		if (consoleOutput.enabled) {
-			console.log(
-				colored
-					? formatted.replace(
-							`[${upperLevel}]`,
-							`[${colorMap[level](upperLevel)}]`,
-						)
-					: formatted,
+	const enqueueWrite = (message, startTime) => {
+		if (!isQueueFull()) return pushWrite(message, startTime);
+		if (onQueueFull !== "block") {
+			droppedMessages++;
+			metrics.writeFailures++;
+			return Promise.reject(
+				new Error("Write queue is full. Log message dropped."),
 			);
 		}
-
-		if (fileOutput.enabled) {
-			await enqueueWrite(formatted.replace(/\r?\n/g, "\\n"), Date.now());
-		}
+		return waitForQueueSpace().then(() => {
+			reservedSlots--;
+			return pushWrite(message, startTime);
+		});
 	};
 
-	// Every log call is tracked until its write settles, so flush() can simply await them.
+	const done = Promise.resolve();
+
+	const onLogError = (e) => {
+		lastFileError = e;
+		console.error("[deadslog/system] Log write failed");
+	};
+
+	// File writes are tracked until they settle, so flush() can simply await them.
 	const track = (p) => {
-		const tracked = p
-			.catch((e) => {
-				lastFileError = e;
-				console.error("[deadslog/system] Log write failed");
-			})
-			.finally(() => inflight.delete(tracked));
+		const tracked = p.then(
+			() => {
+				inflight.delete(tracked);
+			},
+			(e) => {
+				inflight.delete(tracked);
+				onLogError(e);
+			},
+		);
 		inflight.add(tracked);
 		return tracked;
 	};
 
+	// Formatting and console output are synchronous; only file writes allocate promises.
+	const log = (level, args) => {
+		if (isDestroyed) return done;
+
+		const tag = levelTags[level];
+		let formatted;
+		try {
+			formatted = formatter(
+				tag.upper,
+				args.length === 1
+					? stringifyArg(args[0])
+					: args.map(stringifyArg).join(" "),
+			);
+
+			if (excludePattern?.test(formatted)) return done;
+			if (includePattern && !includePattern.test(formatted)) return done;
+
+			if (consoleOutput.enabled) {
+				console.log(
+					colored ? formatted.replace(tag.plain, tag.colored) : formatted,
+				);
+			}
+		} catch (e) {
+			onLogError(e);
+			return done;
+		}
+
+		if (!fileOutput.enabled) return done;
+		const line = formatted.includes("\n")
+			? formatted.replace(/\r?\n/g, "\\n")
+			: formatted;
+		return track(enqueueWrite(line, Date.now()));
+	};
+
+	const skip = () => done;
 	const levelMethods = Object.fromEntries(
 		levelOrder.map((level, i) => [
 			level,
-			i < minLevelIndex
-				? resolvedPromise
-				: (...args) => track(log(level, args)),
+			i < minLevelIndex ? skip : (...args) => log(level, args),
 		]),
 	);
 

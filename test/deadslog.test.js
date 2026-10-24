@@ -831,6 +831,47 @@ describe("deadslog tests", () => {
 		await logger.destroy();
 	});
 
+	it("keeps every line, in order and within maxLogSize, when writes are batched across rotations", async () => {
+		const logPath = makeLog(27);
+		const maxLogSize = 20_000;
+		const logger = deadslog({
+			consoleOutput: { enabled: false },
+			formatter: (_level, message) => message,
+			fileOutput: {
+				enabled: true,
+				logFilePath: logPath,
+				rotate: true,
+				maxLogSize,
+				maxLogFiles: 50,
+				onMaxLogFilesReached: "deleteOld",
+			},
+		});
+
+		const total = 3000;
+		for (let i = 0; i < total; i++) logger.info(`line ${i} ✓`);
+		await logger.flush();
+		await logger.destroy();
+
+		const dir = path.dirname(logPath);
+		const rotatedIndex = (f) => (f === "test-output.log" ? 0 : Number(f.split(".")[1]));
+		const files = fs
+			.readdirSync(dir)
+			.sort((a, b) => rotatedIndex(b) - rotatedIndex(a)); // oldest first
+		expect(files.length).toBeGreaterThan(1);
+
+		const ids = files.flatMap((f) =>
+			fs
+				.readFileSync(path.join(dir, f), "utf8")
+				.split("\n")
+				.filter(Boolean)
+				.map((line) => Number(line.split(" ")[1])),
+		);
+		expect(ids).toEqual(Array.from({ length: total }, (_, i) => i));
+		for (const f of files) {
+			expect(fs.statSync(path.join(dir, f)).size).toBeLessThan(maxLogSize);
+		}
+	});
+
 	it("opens the circuit after repeated write failures and recovers after the cooldown", async () => {
 		const logPath = makeLog(26);
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -845,17 +886,19 @@ describe("deadslog tests", () => {
 			fileOutput: { enabled: true, logFilePath: logPath },
 		});
 
-		// 5 consecutive failures trip the breaker.
+		// 5 consecutive failed messages trip the breaker (they may share one batched write).
 		for (let i = 0; i < 5; i++) logger.info(`fail ${i}`);
 		await logger.flush();
-		expect(writeSpy).toHaveBeenCalledTimes(5);
+		expect(logger.getMetrics().writeFailures).toBe(5);
 
-		// While open, writes are rejected without touching the stream, even if the disk is back.
-		writeSpy.mockRestore();
+		// While open, writes are rejected without touching the stream.
+		const callsWhenOpened = writeSpy.mock.calls.length;
 		logger.info("rejected while open");
 		await logger.flush();
+		expect(writeSpy.mock.calls.length).toBe(callsWhenOpened);
 		expect(logger.getMetrics().lastFileError).toMatch(/circuit breaker/);
 		expect(logger.getMetrics().messagesLogged).toBe(0);
+		writeSpy.mockRestore();
 
 		// Once the cooldown passes, the next write is attempted and succeeds.
 		const realNow = Date.now;

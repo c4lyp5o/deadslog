@@ -19,6 +19,7 @@ A dead simple logger module for Node.js. Provides console and file-based logging
 - 🧱 Handles undefined/non-serializable messages  
 - 🧠 TypeScript type definitions included  
 - 🔁 ESM + CommonJS support  
+- 🪶 Zero runtime dependencies  
 
 ## 📦 Installation
 
@@ -84,7 +85,7 @@ Returns a logger instance.
 | Option                            | Type       | Description |
 | --------------------------------- | ---------- | ----------- |
 | `consoleOutput.enabled`           | `boolean`  | Enable console logging (default: `true`) |
-| `consoleOutput.coloredCoding`     | `boolean`  | Enable colored output using `yoctocolors` (default: `false`; `true` when `consoleOutput` is omitted) |
+| `consoleOutput.coloredCoding`     | `boolean`  | Enable ANSI-colored level tags, respecting `NO_COLOR`/`FORCE_COLOR` (default: `false`; `true` when `consoleOutput` is omitted) |
 | `fileOutput.enabled`              | `boolean`  | Enable file logging (default: `false`) |
 | `fileOutput.logFilePath`          | `string`   | File path for log output (**required** if `fileOutput.enabled` is `true`) |
 | `fileOutput.rotate`               | `boolean`  | Enable automatic log file rotation (default: `false`) |
