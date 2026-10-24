@@ -23,6 +23,8 @@ A dead simple logger module for Node.js. Provides console and file-based logging
 
 ## 📦 Installation
 
+Requires Node.js 18 or later.
+
 ```sh
 npm install deadslog
 # or
@@ -71,7 +73,7 @@ const logger = deadslog({
 logger.info("This will be written to a file!");
 ```
 
-For **file output**, deadslog escapes real newline characters (`\n` / `\r\n`) into the two-character sequence `\\n` so that **each log call produces exactly one physical line** in the log file (better for rotation, grep, CSV/JSONL parsing, and log shippers).
+For **file output**, deadslog replaces real line breaks (LF / CRLF) with a literal backslash followed by `n`, so that **each log call produces exactly one physical line** in the log file (better for rotation, grep, CSV/JSONL parsing, and log shippers).
 
 Console output is unchanged and will display multiline stack traces.
 
@@ -91,25 +93,22 @@ Returns a logger instance.
 | `fileOutput.rotate`               | `boolean`  | Enable automatic log file rotation (default: `false`) |
 | `fileOutput.maxLogSize`           | `number`   | Maximum log file size in bytes before rotation (**required** if `fileOutput.rotate` is `true`) |
 | `fileOutput.maxLogFiles`          | `number`   | Number of rotated files to keep (**required** if `fileOutput.rotate` is `true`) |
-| `fileOutput.onMaxLogFilesReached` | `string`   | Rotation strategy: `"deleteOld"` or `"archiveOld"` (**required** if `fileOutput.rotate` is `true`) |
+| `fileOutput.onMaxLogFilesReached` | `string`   | How rotated files are kept: `"deleteOld"` (plain `app.1.log`, ...) or `"archiveOld"` (gzipped `app.1.log.gz`, ...). Either way the oldest is deleted past `maxLogFiles` (**required** if `fileOutput.rotate` is `true`) |
 | `fileOutput.maxQueueSize`         | `number`   | Maximum number of queued file writes before queue-full strategy applies (default: `100000`) |
 | `fileOutput.onQueueFull`          | `string`   | Queue-full strategy: `"drop"` (default) or `"block"` |
-| `fileOutput.queueFullTimeoutMs`   | `number`   | Max time (ms) to wait for queue space when `onQueueFull: "block"` (default: `5000`) |
-| `formatter`                       | `function` | Optional custom formatter for log messages |
+| `fileOutput.queueFullTimeoutMs`   | `number`   | Max time (ms) to wait for queue space when `onQueueFull: "block"`; `0` waits indefinitely (default: `5000`) |
+| `formatter`                       | `function` | Optional `(level, message) => string`; `message` is the arguments already serialized and joined. Colors apply only if the output contains the `[LEVEL]` tag |
 | `minLevel`                        | `string`   | Minimum log level: `trace`, `debug`, `info`, `success`, `warn`, `error`, `fatal` (default: `info`) |
 | `filters.include`                 | `string`   | RegExp string; if provided, only matching formatted lines are logged |
 | `filters.exclude`                 | `string`   | RegExp string; if provided, matching formatted lines are skipped |
 
 #### 🧰 Logger Methods
-- `trace(msg)`
-- `debug(msg)`
-- `info(msg)`
-- `success(msg)`
-- `warn(msg)`
-- `error(msg)`
-- `fatal(msg)`
-- `flush()`
-- `destroy()`
+- `trace(...args)`, `debug(...args)`, `info(...args)`, `success(...args)`, `warn(...args)`, `error(...args)`, `fatal(...args)`: variadic like `console.log`, e.g. `logger.error("request failed", err, { requestId })`. They never throw; each returns a promise (never rejects) that settles once the line is written, if you want to await it.
+- `flush()`: wait until all pending writes and rotations finish.
+- `destroy()`: flush, then close the file. Later log calls are ignored.
+- `getMetrics()`: file-writer stats (`messagesLogged`, `bytesWritten`, `writeFailures`, `droppedMessages`, `rotations`, `averageWriteTime`, `lastFileError`, ...), or a message string if file output is disabled.
+
+If 5 messages in a row fail to reach the file (e.g. disk full or permissions), file writes pause for 30 seconds, then the next write is retried. Rejected messages are counted in `writeFailures`.
 
 ## 🧠 TypeScript
 Type definitions are included and will be picked up automatically.
@@ -204,7 +203,7 @@ deadslog is a small, console-friendly logger for Node.js that focuses on *robust
 It keeps the ergonomics of `console.log(...args)` (variadic arguments, readable output, optional colored levels), but adds production-minded behavior that many lightweight loggers skip:
 
 - **Durable shutdown**: `flush()` / `destroy()` wait for in-flight logs, queued writes, and rotations to finish.
-- **File rotation**: rotate by size and keep a configurable number of files, with either **delete old** or **gzip archive** strategies.
+- **File rotation**: rotate by size and keep a configurable number of files, stored plain or **gzip-archived**.
 - **Backpressure control**: choose whether a full write queue should **drop** logs (and track it) or **block** with a timeout.
 - **Simple formatting** by default, with a custom formatter hook when you want full control.
 
@@ -212,20 +211,7 @@ If you need high-throughput structured JSON logging and an ecosystem of transpor
 
 ## Changelog
 
-## [v1.3.1] - 2026-03-08
-### Changed
-- Logging payloads are now built from variadic arguments in the exact order supplied (console-like behavior).
-- The logger now stringifies non-string payload parts more readably, including:
-  - `undefined` → `"undefined"`
-  - `BigInt` values → string form with `n` suffix (e.g. `1n`)
-  - circular references → `"[Circular Reference]"`
-  - non-serializable objects → `"[Non-serializable]"`
-- `defaultFormatter` now treats the incoming `message` as a pre-built string payload (stringification happens during payload building).
-- File output now escapes newline characters (`\n`/`\r\n`) as `\\n` to ensure one log entry per line (console output remains multiline for stack traces).
-
----
-
-See [CHANGELOG.md](./CHANGELOG.md) for previous versions and more details.
+See [CHANGELOG.md](./CHANGELOG.md).
 
 ## License
 MIT
