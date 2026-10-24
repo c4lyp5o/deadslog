@@ -202,13 +202,8 @@ const ignoreENOENT = (e) => {
 	if (e?.code !== "ENOENT") throw e;
 };
 
-const stringifyArg = (a) => {
-	if (a instanceof Error) return a.stack || a.toString();
-	if (typeof a === "string") return a;
-	if (typeof a === "bigint") return `${a}n`;
-	if (!isObject(a)) return String(a);
-
-	// Track only the current ancestor chain so shared (non-circular) references still serialize.
+// Track only the current ancestor chain so shared (non-circular) references still serialize.
+const safeStringify = (a) => {
 	const ancestors = [];
 	try {
 		return JSON.stringify(a, function (_k, v) {
@@ -221,6 +216,20 @@ const stringifyArg = (a) => {
 		});
 	} catch {
 		return "[Non-serializable]";
+	}
+};
+
+const stringifyArg = (a) => {
+	if (a instanceof Error) return a.stack || a.toString();
+	if (typeof a === "string") return a;
+	if (typeof a === "bigint") return `${a}n`;
+	if (!isObject(a)) return String(a);
+
+	// Plain JSON.stringify is ~3x faster; it only throws on cycles and BigInts, which take the safe path.
+	try {
+		return JSON.stringify(a);
+	} catch {
+		return safeStringify(a);
 	}
 };
 
