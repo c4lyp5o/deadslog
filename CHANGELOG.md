@@ -1,5 +1,44 @@
 # Changelog
 
+All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
+
+## [2.0.0](https://github.com/c4lyp5o/deadslog/compare/v1.3.1...v2.0.0) (2026-10-24)
+
+### ⚠ BREAKING CHANGES
+
+* Node.js 16 is no longer supported; the minimum is now Node 18.
+
+### 🐛 Fixes
+
+* circuit breaker recovery, queue backpressure and metrics accuracy ([467bace](https://github.com/c4lyp5o/deadslog/commit/467bace7ac711b33e62f587ff0e0b3896b9543d2))
+* harden CI publish and add flush latency regression test ([b1c968c](https://github.com/c4lyp5o/deadslog/commit/b1c968cbee79973ed5ca56a0a88efbb535fc7afa))
+
+### 🧹 Chores
+
+* add build and ci sections to the changelog config ([15b3b34](https://github.com/c4lyp5o/deadslog/commit/15b3b34ec81d2743564afb9db6e33496a749c8de))
+
+### 📚 Documentation
+
+* add more custom formatter examples ([7c38bbd](https://github.com/c4lyp5o/deadslog/commit/7c38bbd8b53a9bfa0ec639239f683d431ce43185))
+* bring README in line with current behaviour ([aa43034](https://github.com/c4lyp5o/deadslog/commit/aa4303468887e8c479e7ebf7c5fa95104100a7fb))
+* correct JSDoc for formatter, rotation, queue and lifecycle ([7ee97a2](https://github.com/c4lyp5o/deadslog/commit/7ee97a262a2527bef3a56a8390be789ae254c9c7))
+
+### ⚡ Performance
+
+* batch file writes and drop runtime dependency ([14ca32d](https://github.com/c4lyp5o/deadslog/commit/14ca32dfc618dc1b6310483fb1355d88ee716428))
+* ship a single bundle with a one-line ESM re-export ([1d7371a](https://github.com/c4lyp5o/deadslog/commit/1d7371a449d3b4325b058081c99d773ed01eff68))
+* try plain JSON.stringify before the circular-safe serializer ([4e99030](https://github.com/c4lyp5o/deadslog/commit/4e9903066096de703f76ea5efa4e040bf6fa855a))
+
+### 📦 Build
+
+* ship a real CommonJS bundle, require Node 18, upgrade deps ([86539ac](https://github.com/c4lyp5o/deadslog/commit/86539ac375703da798162dd690845c0ec3655de1))
+
+### 🤖 CI
+
+* publish to npm via trusted publishing ([87a62dd](https://github.com/c4lyp5o/deadslog/commit/87a62ddf59260b201ac08bee4e3256fe317caf32))
+
+# Changelog
+
 All notable changes to this project will be documented in this file.
 
 ## [v1.3.1] - 2026-03-08

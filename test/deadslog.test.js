@@ -232,6 +232,38 @@ describe("deadslog tests", () => {
 		await logger.destroy();
 	});
 
+	it("serializes shared (non-circular) references instead of marking them circular", async () => {
+		const logger = deadslog({
+			consoleOutput: { enabled: true, coloredCoding: false },
+		});
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		const shared = { id: 1 };
+		logger.info({ a: shared, b: shared });
+
+		const output = spy.mock.calls[0][0];
+		expect(output).toContain('{"a":{"id":1},"b":{"id":1}}');
+		expect(output).not.toContain("Circular Reference");
+
+		await logger.destroy();
+	});
+
+	it("counts bytesWritten in UTF-8 bytes", async () => {
+		const logPath = makeLog(25);
+		const logger = deadslog({
+			consoleOutput: { enabled: false },
+			fileOutput: { enabled: true, logFilePath: logPath },
+		});
+
+		logger.info("héllo ✓");
+		await logger.flush();
+
+		const m = logger.getMetrics();
+		expect(m.bytesWritten).toBe(fs.statSync(logPath).size);
+
+		await logger.destroy();
+	});
+
 	it("handles top-level Error messages correctly", async () => {
 		const logger = deadslog({ consoleOutput: { enabled: true } });
 		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -770,5 +802,118 @@ describe("deadslog tests", () => {
 
 		const m = logger.getMetrics();
 		expect(m.droppedMessages).toBe(0);
+	});
+
+	it("records finite write latencies when flushing a pending queue", async () => {
+		const logPath = makeLog(24);
+		const logger = deadslog({
+			consoleOutput: { enabled: false },
+			fileOutput: {
+				enabled: true,
+				logFilePath: logPath,
+				rotate: true,
+				maxLogSize: 300,
+				maxLogFiles: 2,
+				onMaxLogFilesReached: "deleteOld",
+			},
+		});
+
+		// A synchronous burst that forces several rotations while it is still queued.
+		for (let i = 0; i < 25; i++) logger.info(`Flush latency ${i}`);
+
+		await logger.flush();
+
+		const metrics = logger.getMetrics();
+		expect(metrics.writeLatencies.length).toBeGreaterThan(0);
+		expect(metrics.writeLatencies.every(Number.isFinite)).toBe(true);
+		expect(Number.isFinite(metrics.averageWriteTime)).toBe(true);
+
+		await logger.destroy();
+	});
+
+	it("keeps every line, in order and within maxLogSize, when writes are batched across rotations", async () => {
+		const logPath = makeLog(27);
+		const maxLogSize = 20_000;
+		const logger = deadslog({
+			consoleOutput: { enabled: false },
+			formatter: (_level, message) => message,
+			fileOutput: {
+				enabled: true,
+				logFilePath: logPath,
+				rotate: true,
+				maxLogSize,
+				maxLogFiles: 50,
+				onMaxLogFilesReached: "deleteOld",
+			},
+		});
+
+		const total = 3000;
+		for (let i = 0; i < total; i++) logger.info(`line ${i} ✓`);
+		await logger.flush();
+		await logger.destroy();
+
+		const dir = path.dirname(logPath);
+		const rotatedIndex = (f) => (f === "test-output.log" ? 0 : Number(f.split(".")[1]));
+		const files = fs
+			.readdirSync(dir)
+			.sort((a, b) => rotatedIndex(b) - rotatedIndex(a)); // oldest first
+		expect(files.length).toBeGreaterThan(1);
+
+		const ids = files.flatMap((f) =>
+			fs
+				.readFileSync(path.join(dir, f), "utf8")
+				.split("\n")
+				.filter(Boolean)
+				.map((line) => Number(line.split(" ")[1])),
+		);
+		expect(ids).toEqual(Array.from({ length: total }, (_, i) => i));
+		for (const f of files) {
+			expect(fs.statSync(path.join(dir, f)).size).toBeLessThan(maxLogSize);
+		}
+	});
+
+	it("opens the circuit after repeated write failures and recovers after the cooldown", async () => {
+		const logPath = makeLog(26);
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const writeSpy = vi
+			.spyOn(fs.WriteStream.prototype, "write")
+			.mockImplementation(() => {
+				throw new Error("Disk unavailable");
+			});
+
+		const logger = deadslog({
+			consoleOutput: { enabled: false },
+			fileOutput: { enabled: true, logFilePath: logPath },
+		});
+
+		// 5 consecutive failed messages trip the breaker (they may share one batched write).
+		for (let i = 0; i < 5; i++) logger.info(`fail ${i}`);
+		await logger.flush();
+		expect(logger.getMetrics().writeFailures).toBe(5);
+
+		// While open, writes are rejected without touching the stream.
+		const callsWhenOpened = writeSpy.mock.calls.length;
+		logger.info("rejected while open");
+		await logger.flush();
+		expect(writeSpy.mock.calls.length).toBe(callsWhenOpened);
+		expect(logger.getMetrics().lastFileError).toMatch(/circuit breaker/);
+		expect(logger.getMetrics().messagesLogged).toBe(0);
+		writeSpy.mockRestore();
+
+		// Once the cooldown passes, the next write is attempted and succeeds.
+		const realNow = Date.now;
+		vi.spyOn(Date, "now").mockImplementation(() => realNow() + 31_000);
+		logger.info("after cooldown");
+		await logger.flush();
+
+		const m = logger.getMetrics();
+		expect(m.messagesLogged).toBe(1);
+		expect(m.writeFailures).toBe(6);
+		const contents = fs.readFileSync(logPath, "utf8");
+		expect(contents).toContain("after cooldown");
+		expect(contents).not.toContain("rejected while open");
+
+		await logger.destroy();
+		errorSpy.mockRestore();
 	});
 });
