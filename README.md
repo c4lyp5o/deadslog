@@ -196,6 +196,131 @@ const jsonlFormatter = (level, message) => {
 {"ts":1714740493123,"level":"INFO","message":"Something happened"}
 ```
 
+### 🔑 6. logfmt (key=value) Formatter
+
+Readable by Grafana Loki, Heroku and most log shippers.
+
+```javascript
+const logfmtFormatter = (level, message) =>
+  `ts=${new Date().toISOString()} level=${level.toLowerCase()} msg=${JSON.stringify(message)}`;
+```
+
+```yaml
+ts=2026-10-24T17:10:06.603Z level=info msg="user signed in {\"userId\":42}"
+```
+
+### 📐 7. Aligned Columns Formatter
+
+Keeps the `[LEVEL]` tag, so `coloredCoding` still colors it. Padding is applied before coloring, so columns stay aligned.
+
+```javascript
+const alignedFormatter = (level, message) => {
+  const time = new Date().toTimeString().slice(0, 8);
+  return `${time} ${`[${level}]`.padEnd(9)} ${message}`;
+};
+```
+
+```yaml
+01:10:06 [INFO]    server listening on :3000
+01:10:06 [WARN]    slow query 1200ms
+01:10:06 [ERROR]   payment failed
+```
+
+### 🏷 8. Service Context Formatter (factory)
+
+Build the formatter once with static context; it is reused for every line.
+
+```javascript
+import { hostname } from "node:os";
+
+const contextFormatter = ({ service, env }) => {
+  const host = hostname();
+  return (level, message) =>
+    `[${level}] ${new Date().toISOString()} ${service}@${env} host=${host} pid=${process.pid} - ${message}`;
+};
+
+const logger = deadslog({ formatter: contextFormatter({ service: "billing", env: "prod" }) });
+```
+
+```yaml
+[INFO] 2026-10-24T17:10:06.608Z billing@prod host=web-01 pid=4972 - invoice created {"id":"inv_123"}
+```
+
+### 📟 9. Syslog-Style Formatter
+
+RFC 5424-style lines with priority (`facility 1 * 8 + severity`) for syslog collectors.
+
+```javascript
+import { hostname } from "node:os";
+
+const host = hostname();
+const severity = { TRACE: 7, DEBUG: 7, INFO: 6, SUCCESS: 5, WARN: 4, ERROR: 3, FATAL: 2 };
+const syslogFormatter = (level, message) =>
+  `<${8 + severity[level]}>1 ${new Date().toISOString()} ${host} my-app ${process.pid} - ${message}`;
+```
+
+```yaml
+<11>1 2026-10-24T17:10:06.608Z web-01 my-app 4972 - database unreachable
+<14>1 2026-10-24T17:10:06.609Z web-01 my-app 4972 - retry succeeded
+```
+
+### ⏱ 10. Elapsed Time Formatter
+
+Handy for profiling startup or scripts.
+
+```javascript
+const start = process.hrtime.bigint();
+const elapsedFormatter = (level, message) => {
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  return `[${level}] +${ms.toFixed(1)}ms ${message}`;
+};
+```
+
+```yaml
+[INFO] +8.5ms boot
+[INFO] +12.1ms config loaded
+```
+
+### 🙈 11. Redacting Formatter
+
+The formatter receives the serialized message, so secrets inside logged objects can be masked before they reach the console or file.
+
+```javascript
+const secretField = /("(?:password|token|secret|apiKey)"\s*:\s*)"[^"]*"/gi;
+const bearerToken = /\b(Bearer)\s+[\w.-]+/g;
+
+const redactFormatter = (level, message) => {
+  const redacted = message
+    .replace(secretField, '$1"[REDACTED]"')
+    .replace(bearerToken, "$1 [REDACTED]");
+  return `[${level}] ${new Date().toISOString()} - ${redacted}`;
+};
+```
+
+```yaml
+[INFO] 2026-10-24T17:10:06.609Z - login {"user":"ada","password":"[REDACTED]"}
+[DEBUG] 2026-10-24T17:10:06.609Z - outgoing request Authorization: Bearer [REDACTED]
+```
+
+### ✂️ 12. Truncating Formatter
+
+Caps very long messages (e.g. large payloads) to keep lines readable.
+
+```javascript
+const truncateFormatter = (max = 80) => (level, message) => {
+  const body = message.length > max ? `${message.slice(0, max)}… (+${message.length - max} chars)` : message;
+  return `[${level}] ${new Date().toISOString()} - ${body}`;
+};
+
+const logger = deadslog({ formatter: truncateFormatter(40) });
+```
+
+```yaml
+[INFO] 2026-10-24T17:10:06.609Z - xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx… (+60 chars)
+```
+
+> 💡 Formatters run on every log call, so keep them cheap: build static parts (hostnames, lookup tables, compiled regexes) once outside the function, as in examples 8, 9 and 11.
+
 ## Why deadslog?
 
 deadslog is a small, console-friendly logger for Node.js that focuses on *robust file logging* without the complexity of a full logging framework.
