@@ -12,7 +12,6 @@ import {
 	green,
 	yellow,
 	red,
-	white,
 	bgBlack,
 	bgWhite,
 } from "yoctocolors";
@@ -38,7 +37,7 @@ import { pipeline } from "node:stream/promises";
  * Console output configuration.
  * @typedef {Object} ConsoleOutputConfig
  * @property {boolean} enabled Whether to log to console.
- * @property {boolean} [coloredCoding=true] Whether console output uses colors.
+ * @property {boolean} [coloredCoding=false] Whether console output uses colors (on by default only when `consoleOutput` itself is omitted).
  */
 
 /**
@@ -91,10 +90,11 @@ import { pipeline } from "node:stream/promises";
  * Metrics returned by `getMetrics()` when file output is enabled.
  * @typedef {Object} LoggerMetrics
  * @property {number} messagesLogged Total messages successfully written to file.
- * @property {number} bytesWritten Total bytes written to file (approx).
+ * @property {number} bytesWritten Total bytes written to file.
  * @property {number} queueHighWaterMark Max observed queue size.
  * @property {number} writeFailures Total file write failures (includes drops).
  * @property {number} averageWriteTime Moving average write latency in ms.
+ * @property {number[]} writeLatencies Most recent write latencies in ms (up to 100).
  * @property {number} rotations Number of file rotations performed.
  * @property {number} lastWriteTime Unix ms timestamp of last successful write.
  * @property {number} droppedMessages Number of dropped messages due to full queue (drop mode).
@@ -145,8 +145,10 @@ const colorMap = {
 	warn: yellow,
 	error: red,
 	fatal: (s) => bgWhite(red(s)),
-	default: white,
 };
+const maxFileSystemFailures = 5;
+const circuitResetMs = 30000;
+const latencyWindow = 100;
 const pad = (n, w = 2) => String(n).padStart(w, "0");
 const timestampNow = () => {
 	const now = new Date();
@@ -161,8 +163,32 @@ const defaultFormatter = (level, message) =>
 const assert = (cond, msg) => {
 	if (!cond) throw new Error(msg);
 };
+const isObject = (v) => v !== null && typeof v === "object";
 const ignoreENOENT = (e) => {
 	if (e?.code !== "ENOENT") throw e;
+};
+const resolvedPromise = () => Promise.resolve();
+
+const stringifyArg = (a) => {
+	if (a instanceof Error) return a.stack || a.toString();
+	if (typeof a === "string") return a;
+	if (typeof a === "bigint") return `${a}n`;
+	if (!isObject(a)) return String(a);
+
+	// Track only the current ancestor chain so shared (non-circular) references still serialize.
+	const ancestors = [];
+	try {
+		return JSON.stringify(a, function (_k, v) {
+			if (typeof v === "bigint") return `${v}n`;
+			if (!isObject(v)) return v;
+			while (ancestors.length > 0 && ancestors.at(-1) !== this) ancestors.pop();
+			if (ancestors.includes(v)) return "[Circular Reference]";
+			ancestors.push(v);
+			return v;
+		});
+	} catch {
+		return "[Non-serializable]";
+	}
 };
 
 /**
@@ -178,31 +204,32 @@ const deadslog = ({
 	filters = {},
 } = {}) => {
 	// --- validate ---
-	assert(
-		!consoleOutput || typeof consoleOutput === "object",
-		"consoleOutput must be an object.",
-	);
+	assert(isObject(consoleOutput), "consoleOutput must be an object.");
 	assert(
 		typeof consoleOutput.enabled === "boolean",
 		"consoleOutput.enabled must be a boolean.",
 	);
-	if (
-		consoleOutput.enabled &&
-		typeof consoleOutput.coloredCoding !== "undefined"
-	) {
+	const colored = consoleOutput.coloredCoding ?? false;
+	if (consoleOutput.enabled) {
 		assert(
-			typeof consoleOutput.coloredCoding === "boolean",
+			typeof colored === "boolean",
 			"consoleOutput.coloredCoding must be a boolean.",
 		);
 	}
-	assert(
-		!fileOutput || typeof fileOutput === "object",
-		"fileOutput must be an object.",
-	);
+	assert(isObject(fileOutput), "fileOutput must be an object.");
 	assert(
 		typeof fileOutput.enabled === "boolean",
 		"fileOutput.enabled must be a boolean.",
 	);
+	const {
+		rotate = false,
+		onQueueFull = "drop",
+		queueFullTimeoutMs = 5000,
+		maxQueueSize = 100000,
+		maxLogSize,
+		maxLogFiles,
+		onMaxLogFilesReached,
+	} = fileOutput;
 	if (fileOutput.enabled) {
 		assert(
 			fileOutput.logFilePath,
@@ -212,9 +239,6 @@ const deadslog = ({
 			typeof fileOutput.logFilePath === "string",
 			"fileOutput.logFilePath must be a string.",
 		);
-		const rotate = fileOutput.rotate ?? false;
-		const onQueueFull = fileOutput.onQueueFull ?? "drop";
-		const queueFullTimeoutMs = fileOutput.queueFullTimeoutMs ?? 5000;
 		assert(typeof rotate === "boolean", "fileOutput.rotate must be a boolean.");
 		assert(
 			onQueueFull === "drop" || onQueueFull === "block",
@@ -224,31 +248,28 @@ const deadslog = ({
 			typeof queueFullTimeoutMs === "number" && queueFullTimeoutMs >= 0,
 			"fileOutput.queueFullTimeoutMs must be a non-negative number.",
 		);
-		if (typeof fileOutput.maxQueueSize !== "undefined") {
-			assert(
-				typeof fileOutput.maxQueueSize === "number" &&
-					Number.isFinite(fileOutput.maxQueueSize) &&
-					fileOutput.maxQueueSize >= 1,
-				"fileOutput.maxQueueSize must be a positive finite number.",
-			);
-		}
+		assert(
+			typeof maxQueueSize === "number" &&
+				Number.isFinite(maxQueueSize) &&
+				maxQueueSize >= 1,
+			"fileOutput.maxQueueSize must be a positive finite number.",
+		);
 		if (rotate) {
 			assert(
-				typeof fileOutput.maxLogSize === "number" && fileOutput.maxLogSize >= 1,
+				typeof maxLogSize === "number" && maxLogSize >= 1,
 				"Invalid maxLogSize value for file rotation.",
 			);
 			assert(
-				typeof fileOutput.maxLogFiles === "number" &&
-					fileOutput.maxLogFiles >= 1,
+				typeof maxLogFiles === "number" && maxLogFiles >= 1,
 				"Invalid maxLogFiles value for file rotation.",
 			);
 			assert(
-				typeof fileOutput.onMaxLogFilesReached === "string",
+				typeof onMaxLogFilesReached === "string",
 				"Invalid onMaxFilesReached for file rotation.",
 			);
 			assert(
-				validStrategies.includes(fileOutput.onMaxLogFilesReached),
-				`Invalid value for onMaxLogFilesReached: "${fileOutput.onMaxLogFilesReached}". ` +
+				validStrategies.includes(onMaxLogFilesReached),
+				`Invalid value for onMaxLogFilesReached: "${onMaxLogFilesReached}". ` +
 					`Valid values are: ${validStrategies.join(", ")}.`,
 			);
 		}
@@ -262,61 +283,42 @@ const deadslog = ({
 		levelOrder.includes(minLevel),
 		`Invalid value for minLevel: ${minLevel}. Valid levels are: ${levelOrder.join(", ")}.`,
 	);
-	let includePattern = null;
-	let excludePattern = null;
-	if (typeof filters.include !== "undefined") {
-		assert(
-			typeof filters.include === "string",
-			"filters.include must be a string.",
-		);
+	assert(isObject(filters), "filters must be an object.");
+	const compileFilter = (key) => {
+		const source = filters[key];
+		if (typeof source === "undefined") return null;
+		assert(typeof source === "string", `filters.${key} must be a string.`);
 		try {
-			includePattern = new RegExp(filters.include);
+			return new RegExp(source);
 		} catch (e) {
-			throw new Error(`filters.include is not a valid RegExp: ${e.message}`);
+			throw new Error(`filters.${key} is not a valid RegExp: ${e.message}`);
 		}
-	}
-	if (typeof filters.exclude !== "undefined") {
-		assert(
-			typeof filters.exclude === "string",
-			"filters.exclude must be a string.",
-		);
-		try {
-			excludePattern = new RegExp(filters.exclude);
-		} catch (e) {
-			throw new Error(`filters.exclude is not a valid RegExp: ${e.message}`);
-		}
-	}
+	};
+	const includePattern = compileFilter("include");
+	const excludePattern = compileFilter("exclude");
 
 	// initialization
-	const minLevelIndex = levelOrder.indexOf(minLevel.toLowerCase());
-	const rotate = fileOutput.enabled ? (fileOutput.rotate ?? false) : false;
+	const minLevelIndex = levelOrder.indexOf(minLevel);
 	const logFilePath = fileOutput.enabled
 		? resolve(fileOutput.logFilePath)
 		: null;
-	const maxLogSize = rotate ? fileOutput.maxLogSize : null;
-	const onQueueFull = fileOutput.enabled
-		? (fileOutput.onQueueFull ?? "drop")
-		: "drop";
-	const queueFullTimeoutMs = fileOutput.enabled
-		? (fileOutput.queueFullTimeoutMs ?? 5000)
-		: 5000;
-	const maxQueueSize = fileOutput.enabled
-		? (fileOutput.maxQueueSize ?? 100000)
-		: 100000;
 	let fileStream = null;
 	let openPromise = null;
 	const writeQueue = [];
 	let queueHead = 0;
+	// Queue slots promised to woken "block" waiters that have not pushed yet.
+	let reservedSlots = 0;
+	const queueWaiters = [];
+	const inflight = new Set();
 	let isProcessingQueue = false;
-	let pendingLogs = 0;
 	let isRotating = false;
 	let currentFileBytes = 0;
 	let lastFileError = null;
 	let droppedMessages = 0;
-	let queueWaiters = [];
 	let fileSystemFailures = 0;
-	const maxFileSystemFailures = 5;
+	let circuitRetryAt = 0;
 	let isDestroyed = false;
+	let writeLatencySum = 0;
 	// metrics
 	const metrics = {
 		messagesLogged: 0,
@@ -327,91 +329,60 @@ const deadslog = ({
 		rotations: 0,
 		lastWriteTime: 0,
 		writeLatencies: [],
-		_writeLatencySum: 0,
 	};
 
-	const buildPayloadFromArgs = (args) =>
-		args
-			.map((a) => {
-				if (a instanceof Error) return a.stack || a.toString();
-				if (a === null) return "null";
-				if (a === undefined) return "undefined";
-				if (typeof a === "bigint") return `${a}n`;
-				if (typeof a === "string") return a;
-				if (typeof a !== "object") return String(a);
-
-				const seen = new WeakSet();
-				try {
-					return JSON.stringify(a, (_k, v) => {
-						if (typeof v === "bigint") return `${v}n`;
-						if (typeof v === "object" && v) {
-							if (seen.has(v)) return "[Circular Reference]";
-							seen.add(v);
-						}
-						return v;
-					});
-				} catch {
-					return "[Non-serializable]";
-				}
-			})
-			.join(" ");
-
 	const getQueueLength = () => writeQueue.length - queueHead;
+	const isQueueFull = () =>
+		queueWaiters.length > 0 ||
+		getQueueLength() + reservedSlots >= maxQueueSize;
 
 	const notifyQueueWaiters = () => {
-		if (queueWaiters.length === 0) return;
-		if (getQueueLength() < maxQueueSize) {
-			const waiters = queueWaiters;
-			queueWaiters = [];
-			for (const w of waiters) w.resolve();
+		while (
+			queueWaiters.length > 0 &&
+			getQueueLength() + reservedSlots < maxQueueSize
+		) {
+			reservedSlots++;
+			queueWaiters.shift()();
 		}
 	};
 
-	const openFileStream = async () => {
-		if (!fileOutput.enabled) return;
-		if (fileStream && !fileStream.writableEnded) return;
+	const dequeue = () => {
+		const item = writeQueue[queueHead++];
+		if (queueHead === writeQueue.length) {
+			writeQueue.length = 0;
+			queueHead = 0;
+		} else if (queueHead > 1024 && queueHead * 2 > writeQueue.length) {
+			writeQueue.splice(0, queueHead);
+			queueHead = 0;
+		}
+		notifyQueueWaiters();
+		return item;
+	};
 
-		const logFileDir = dirname(logFilePath);
-		await mkdir(logFileDir, { recursive: true });
+	const openFileStream = async () => {
+		await mkdir(dirname(logFilePath), { recursive: true });
 		try {
-			const st = await stat(logFilePath);
-			currentFileBytes = st.size;
+			currentFileBytes = (await stat(logFilePath)).size;
 		} catch (e) {
-			if (e?.code === "ENOENT") {
-				await writeFile(logFilePath, "", "utf8");
-				currentFileBytes = 0;
-			} else {
-				throw e;
-			}
+			ignoreENOENT(e);
+			await writeFile(logFilePath, "", "utf8");
+			currentFileBytes = 0;
 		}
 
 		const stream = createWriteStream(logFilePath, { flags: "a" });
 		stream.on("error", (e) => {
 			lastFileError = e;
-			fileSystemFailures++;
 			console.error("[deadslog/system] Logging stream error");
 		});
-
 		fileStream = stream;
 	};
 
-	const ensureFileStream = async () => {
-		if (!fileOutput.enabled) return;
-		if (fileStream && !fileStream.writableEnded) return;
-
-		if (!openPromise) {
-			openPromise = (async () => {
-				try {
-					await openFileStream();
-				} catch (e) {
-					lastFileError = e;
-					throw e;
-				} finally {
-					openPromise = null;
-				}
-			})();
-		}
-
+	const ensureFileStream = () => {
+		// `writable` is false once the stream has ended, errored or been destroyed.
+		if (fileStream?.writable) return;
+		openPromise ??= openFileStream().finally(() => {
+			openPromise = null;
+		});
 		return openPromise;
 	};
 
@@ -425,116 +396,72 @@ const deadslog = ({
 		});
 	};
 
-	const shiftRotatedFiles = async ({ dir, name, ext, max, suffix }) => {
-		for (let i = max - 1; i >= 1; i--) {
-			const src = join(dir, `${name}.${i}${ext}${suffix}`);
-			const dest = join(dir, `${name}.${i + 1}${ext}${suffix}`);
-			try {
-				await rename(src, dest);
-			} catch (e) {
-				ignoreENOENT(e);
-			}
-		}
-	};
-
-	const rotateLogs = async (force = false) => {
-		if (!rotate || isRotating || !logFilePath) return;
-
+	const rotateLogs = async () => {
 		isRotating = true;
 		try {
-			if (!force && currentFileBytes < maxLogSize) return;
-
-			metrics.rotations++;
 			await closeFileStream();
 
 			const { dir, name, ext } = parse(logFilePath);
+			const suffix = onMaxLogFilesReached === "archiveOld" ? ".gz" : "";
+			const rotatedPath = (i) => join(dir, `${name}.${i}${ext}${suffix}`);
 
-			if (fileOutput.onMaxLogFilesReached === "deleteOld") {
-				const oldest = join(dir, `${name}.${fileOutput.maxLogFiles}${ext}`);
-				try {
-					await unlink(oldest);
-				} catch (e) {
-					ignoreENOENT(e);
-				}
+			await unlink(rotatedPath(maxLogFiles)).catch(ignoreENOENT);
+			for (let i = maxLogFiles - 1; i >= 1; i--) {
+				await rename(rotatedPath(i), rotatedPath(i + 1)).catch(ignoreENOENT);
+			}
 
-				await shiftRotatedFiles({
-					dir,
-					name,
-					ext,
-					max: fileOutput.maxLogFiles,
-					suffix: "",
-				});
-
-				await rename(logFilePath, join(dir, `${name}.1${ext}`));
-				await writeFile(logFilePath, "", "utf8");
-				currentFileBytes = 0;
-			} else {
-				const oldest = join(dir, `${name}.${fileOutput.maxLogFiles}${ext}.gz`);
-				try {
-					await unlink(oldest);
-				} catch (e) {
-					ignoreENOENT(e);
-				}
-
-				await shiftRotatedFiles({
-					dir,
-					name,
-					ext,
-					max: fileOutput.maxLogFiles,
-					suffix: ".gz",
-				});
-
-				const compressedPath = join(dir, `${name}.1${ext}.gz`);
+			if (suffix) {
 				await pipeline(
 					createReadStream(logFilePath),
 					createGzip(),
-					createWriteStream(compressedPath),
+					createWriteStream(rotatedPath(1)),
 				);
-
-				await writeFile(logFilePath, "", "utf8");
-				currentFileBytes = 0;
+			} else {
+				await rename(logFilePath, rotatedPath(1));
 			}
 
-			await ensureFileStream();
+			await writeFile(logFilePath, "", "utf8");
+			currentFileBytes = 0;
+			metrics.rotations++;
 		} catch (e) {
 			lastFileError = e;
 			console.error("[deadslog/system] Error during log rotation");
-			try {
-				if (fileOutput.enabled && !fileStream) await ensureFileStream();
-			} catch {
-				console.error(
-					"[deadslog/system] Failed to reopen stream after rotation",
-				);
-			}
 		} finally {
 			isRotating = false;
 		}
 	};
 
-	const writeMetrics = (message) => {
+	const recordWrite = (lineBytes, startTime) => {
+		const now = Date.now();
+		const latency = now - startTime;
 		metrics.messagesLogged++;
-		metrics.bytesWritten += message.length + 1;
-		metrics.queueHighWaterMark = Math.max(
-			metrics.queueHighWaterMark,
-			getQueueLength(),
-		);
-	};
-
-	const latencyMetrics = (startTime) => {
-		const latency = Date.now() - startTime;
+		metrics.bytesWritten += lineBytes;
+		metrics.lastWriteTime = now;
 		metrics.writeLatencies.push(latency);
-		metrics._writeLatencySum += latency;
-		if (metrics.writeLatencies.length > 100) {
-			const removed = metrics.writeLatencies.shift();
-			metrics._writeLatencySum -= removed;
+		writeLatencySum += latency;
+		if (metrics.writeLatencies.length > latencyWindow) {
+			writeLatencySum -= metrics.writeLatencies.shift();
 		}
-		metrics.averageWriteTime =
-			metrics.writeLatencies.length === 0
-				? 0
-				: metrics._writeLatencySum / metrics.writeLatencies.length;
-
-		metrics.lastWriteTime = Date.now();
+		metrics.averageWriteTime = writeLatencySum / metrics.writeLatencies.length;
 	};
+
+	const recordFailure = (e) => {
+		lastFileError = e;
+		metrics.writeFailures++;
+		if (++fileSystemFailures >= maxFileSystemFailures) {
+			circuitRetryAt = Date.now() + circuitResetMs;
+		}
+	};
+
+	// After too many consecutive failures, reject writes until the cooldown passes;
+	// the next write after that is a trial that either resets or re-opens the circuit.
+	const isCircuitOpen = () =>
+		fileSystemFailures >= maxFileSystemFailures && Date.now() < circuitRetryAt;
+
+	const writeLine = (line) =>
+		new Promise((resolve, reject) => {
+			fileStream.write(line, (e) => (e ? reject(e) : resolve()));
+		});
 
 	const processWriteQueue = async () => {
 		if (isProcessingQueue) return;
@@ -542,26 +469,16 @@ const deadslog = ({
 
 		try {
 			while (getQueueLength() > 0) {
-				if (fileSystemFailures >= maxFileSystemFailures) {
-					while (getQueueLength() > 0) {
-						const item = writeQueue[queueHead++];
-						item.reject(
-							new Error(
-								"Too many file system failures; logging disabled until stream recovers.",
-							),
-						);
-					}
-					writeQueue.length = 0;
-					queueHead = 0;
-					notifyQueueWaiters();
-					break;
-				}
+				const { message, startTime, resolve, reject } = dequeue();
 
-				const { message, startTime, resolve, reject } = writeQueue[queueHead++];
-
-				if (queueHead > 1024 && queueHead * 2 > writeQueue.length) {
-					writeQueue.splice(0, queueHead);
-					queueHead = 0;
+				if (isCircuitOpen()) {
+					metrics.writeFailures++;
+					reject(
+						new Error(
+							"Too many file system failures; logging paused until the circuit breaker resets.",
+						),
+					);
+					continue;
 				}
 
 				try {
@@ -572,88 +489,65 @@ const deadslog = ({
 						currentFileBytes > 0 &&
 						currentFileBytes + lineBytes >= maxLogSize
 					)
-						await rotateLogs(true);
+						await rotateLogs();
 
 					await ensureFileStream();
-					if (!fileStream || fileStream.writableEnded) {
-						fileSystemFailures++;
-						lastFileError =
-							lastFileError ?? new Error("File stream is closed.");
-						reject(lastFileError);
-						continue;
-					}
+					if (!fileStream?.writable)
+						throw new Error("File stream is not writable.");
 
-					await new Promise((resolve, reject) => {
-						fileStream.write(`${message}\n`, (e) =>
-							e ? reject(e) : resolve(),
-						);
-					});
+					await writeLine(`${message}\n`);
 
 					fileSystemFailures = 0;
 					currentFileBytes += lineBytes;
-					writeMetrics(message);
-					latencyMetrics(startTime);
+					recordWrite(lineBytes, startTime);
 					resolve();
 				} catch (e) {
-					lastFileError = e;
-					fileSystemFailures++;
-					metrics.writeFailures++;
+					recordFailure(e);
 					console.error("[deadslog/system] Error writing to log file");
-
-					try {
-						await closeFileStream();
-					} catch {
-						// ignore
-					}
-
+					await closeFileStream().catch(() => {});
 					reject(e);
-					notifyQueueWaiters();
 				}
 			}
 		} finally {
 			isProcessingQueue = false;
-			notifyQueueWaiters();
 		}
 	};
 
-	const waitForQueueSpace = async () => {
-		if (getQueueLength() < maxQueueSize) return;
-
-		await new Promise((resolve, reject) => {
+	const waitForQueueSpace = () =>
+		new Promise((resolve, reject) => {
 			let timer = null;
+			const waiter = () => {
+				clearTimeout(timer);
+				resolve();
+			};
 
 			if (queueFullTimeoutMs > 0) {
 				timer = setTimeout(() => {
-					timer = null;
+					queueWaiters.splice(queueWaiters.indexOf(waiter), 1);
 					reject(new Error("Timed out waiting for log queue space."));
 				}, queueFullTimeoutMs);
 			}
 
-			queueWaiters.push({
-				resolve: () => {
-					if (timer) clearTimeout(timer);
-					resolve();
-				},
-			});
+			queueWaiters.push(waiter);
 		});
-	};
 
 	const enqueueWrite = async (message, startTime) => {
-		if (getQueueLength() >= maxQueueSize) {
-			if (onQueueFull === "block") {
-				await waitForQueueSpace();
-			} else {
+		if (isQueueFull()) {
+			if (onQueueFull !== "block") {
 				droppedMessages++;
 				metrics.writeFailures++;
-				lastFileError =
-					lastFileError ??
-					new Error("Write queue is full. Log message dropped.");
-				return Promise.reject(lastFileError);
+				throw new Error("Write queue is full. Log message dropped.");
 			}
+			await waitForQueueSpace();
+			reservedSlots--;
 		}
 
 		return new Promise((resolve, reject) => {
 			writeQueue.push({ message, startTime, resolve, reject });
+			metrics.queueHighWaterMark = Math.max(
+				metrics.queueHighWaterMark,
+				getQueueLength(),
+			);
 			processWriteQueue().catch((e) => {
 				lastFileError = e;
 				console.error("[deadslog/system] Queue processor failed");
@@ -661,70 +555,56 @@ const deadslog = ({
 		});
 	};
 
-	const log = async (msgLevel, ...args) => {
+	const log = async (level, args) => {
 		if (isDestroyed) return;
 
-		pendingLogs++;
-		try {
-			const msgLevelIndex = levelOrder.indexOf(msgLevel);
-			if (msgLevelIndex < minLevelIndex) return;
+		const upperLevel = level.toUpperCase();
+		const formatted = formatter(upperLevel, args.map(stringifyArg).join(" "));
 
-			const upperLevel = msgLevel.toUpperCase();
-			const combinedMessage = buildPayloadFromArgs(args);
-			const formatted = formatter(upperLevel, combinedMessage);
+		if (excludePattern?.test(formatted)) return;
+		if (includePattern && !includePattern.test(formatted)) return;
 
-			if (excludePattern?.test(formatted)) return;
-			if (includePattern && !includePattern.test(formatted)) return;
+		if (consoleOutput.enabled) {
+			console.log(
+				colored
+					? formatted.replace(
+							`[${upperLevel}]`,
+							`[${colorMap[level](upperLevel)}]`,
+						)
+					: formatted,
+			);
+		}
 
-			if (consoleOutput.enabled) {
-				if (consoleOutput.coloredCoding) {
-					const colorFn = colorMap[msgLevel] || colorMap.default;
-					const bracketedLevel = `[${upperLevel}]`;
-					const coloredBracket = `[${colorFn(upperLevel)}]`;
-					console.log(formatted.replace(bracketedLevel, coloredBracket));
-				} else {
-					console.log(formatted);
-				}
-			}
-
-			if (!fileOutput.enabled) return;
-
-			try {
-				await ensureFileStream();
-			} catch (e) {
-				lastFileError = e;
-				throw e;
-			}
-
-			const fileFormatted = formatted.replace(/\r?\n/g, "\\n");
-			return enqueueWrite(fileFormatted, Date.now());
-		} finally {
-			pendingLogs--;
+		if (fileOutput.enabled) {
+			await enqueueWrite(formatted.replace(/\r?\n/g, "\\n"), Date.now());
 		}
 	};
 
-	const safe = (p) =>
-		Promise.resolve(p).catch((e) => {
-			lastFileError = e;
-			console.error("[deadslog/system] Log write failed");
-		});
+	// Every log call is tracked until its write settles, so flush() can simply await them.
+	const track = (p) => {
+		const tracked = p
+			.catch((e) => {
+				lastFileError = e;
+				console.error("[deadslog/system] Log write failed");
+			})
+			.finally(() => inflight.delete(tracked));
+		inflight.add(tracked);
+		return tracked;
+	};
+
+	const levelMethods = Object.fromEntries(
+		levelOrder.map((level, i) => [
+			level,
+			i < minLevelIndex
+				? resolvedPromise
+				: (...args) => track(log(level, args)),
+		]),
+	);
 
 	const LoggerInstance = {
-		trace: (...args) => safe(log("trace", ...args)),
-		debug: (...args) => safe(log("debug", ...args)),
-		info: (...args) => safe(log("info", ...args)),
-		success: (...args) => safe(log("success", ...args)),
-		warn: (...args) => safe(log("warn", ...args)),
-		error: (...args) => safe(log("error", ...args)),
-		fatal: (...args) => safe(log("fatal", ...args)),
+		...levelMethods,
 		flush: async () => {
-			while (
-				pendingLogs > 0 ||
-				getQueueLength() > 0 ||
-				isProcessingQueue ||
-				isRotating
-			)
-				await new Promise((resolve) => setTimeout(resolve, 25));
+			while (inflight.size > 0) await Promise.all(inflight);
 		},
 		destroy: async () => {
 			if (isDestroyed) return;
@@ -737,12 +617,13 @@ const deadslog = ({
 				return "fileOutput is disabled. No metrics available";
 			return {
 				...metrics,
+				writeLatencies: [...metrics.writeLatencies],
 				currentQueueSize: getQueueLength(),
 				isProcessingQueue,
 				isRotating,
 				droppedMessages,
 				lastFileError: lastFileError
-					? String(lastFileError?.message ?? lastFileError)
+					? String(lastFileError.message ?? lastFileError)
 					: null,
 				currentFileBytes,
 			};

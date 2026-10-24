@@ -232,6 +232,38 @@ describe("deadslog tests", () => {
 		await logger.destroy();
 	});
 
+	it("serializes shared (non-circular) references instead of marking them circular", async () => {
+		const logger = deadslog({
+			consoleOutput: { enabled: true, coloredCoding: false },
+		});
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		const shared = { id: 1 };
+		logger.info({ a: shared, b: shared });
+
+		const output = spy.mock.calls[0][0];
+		expect(output).toContain('{"a":{"id":1},"b":{"id":1}}');
+		expect(output).not.toContain("Circular Reference");
+
+		await logger.destroy();
+	});
+
+	it("counts bytesWritten in UTF-8 bytes", async () => {
+		const logPath = makeLog(25);
+		const logger = deadslog({
+			consoleOutput: { enabled: false },
+			fileOutput: { enabled: true, logFilePath: logPath },
+		});
+
+		logger.info("héllo ✓");
+		await logger.flush();
+
+		const m = logger.getMetrics();
+		expect(m.bytesWritten).toBe(fs.statSync(logPath).size);
+
+		await logger.destroy();
+	});
+
 	it("handles top-level Error messages correctly", async () => {
 		const logger = deadslog({ consoleOutput: { enabled: true } });
 		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -786,8 +818,7 @@ describe("deadslog tests", () => {
 			},
 		});
 
-		// Rotation suspends the drain loop, so this synchronous burst stays queued
-		// and is handed to flush() rather than written by the normal path.
+		// A synchronous burst that forces several rotations while it is still queued.
 		for (let i = 0; i < 25; i++) logger.info(`Flush latency ${i}`);
 
 		await logger.flush();
@@ -798,5 +829,48 @@ describe("deadslog tests", () => {
 		expect(Number.isFinite(metrics.averageWriteTime)).toBe(true);
 
 		await logger.destroy();
+	});
+
+	it("opens the circuit after repeated write failures and recovers after the cooldown", async () => {
+		const logPath = makeLog(26);
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const writeSpy = vi
+			.spyOn(fs.WriteStream.prototype, "write")
+			.mockImplementation(() => {
+				throw new Error("Disk unavailable");
+			});
+
+		const logger = deadslog({
+			consoleOutput: { enabled: false },
+			fileOutput: { enabled: true, logFilePath: logPath },
+		});
+
+		// 5 consecutive failures trip the breaker.
+		for (let i = 0; i < 5; i++) logger.info(`fail ${i}`);
+		await logger.flush();
+		expect(writeSpy).toHaveBeenCalledTimes(5);
+
+		// While open, writes are rejected without touching the stream, even if the disk is back.
+		writeSpy.mockRestore();
+		logger.info("rejected while open");
+		await logger.flush();
+		expect(logger.getMetrics().lastFileError).toMatch(/circuit breaker/);
+		expect(logger.getMetrics().messagesLogged).toBe(0);
+
+		// Once the cooldown passes, the next write is attempted and succeeds.
+		const realNow = Date.now;
+		vi.spyOn(Date, "now").mockImplementation(() => realNow() + 31_000);
+		logger.info("after cooldown");
+		await logger.flush();
+
+		const m = logger.getMetrics();
+		expect(m.messagesLogged).toBe(1);
+		expect(m.writeFailures).toBe(6);
+		const contents = fs.readFileSync(logPath, "utf8");
+		expect(contents).toContain("after cooldown");
+		expect(contents).not.toContain("rejected while open");
+
+		await logger.destroy();
+		errorSpy.mockRestore();
 	});
 });
