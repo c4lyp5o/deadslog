@@ -40,12 +40,15 @@ import { pipeline } from "node:stream/promises";
  * @property {boolean} [rotate=false] Whether to rotate log files once they reach `maxLogSize`.
  * @property {number} [maxLogSize] Max file size (bytes) before rotation (required when `rotate` is true).
  * @property {number} [maxLogFiles] Max number of rotated files to keep (required when `rotate` is true).
- * @property {RotationStrategy} [onMaxLogFilesReached] Strategy when max rotated files is reached.
+ * @property {RotationStrategy} [onMaxLogFilesReached] How rotated files are kept (required when `rotate` is true).
+ *  Either way the oldest file is deleted once `maxLogFiles` is exceeded.
+ *  - `"deleteOld"`: rotated files are kept as plain text (`app.1.log`, `app.2.log`, ...)
+ *  - `"archiveOld"`: rotated files are gzipped (`app.1.log.gz`, `app.2.log.gz`, ...)
  *
  * @property {QueueFullStrategy} [onQueueFull="drop"] What to do when the internal write queue is full.
- *  - `"drop"`: reject immediately (message dropped; increments droppedMessages metric)
+ *  - `"drop"`: drop the message silently (counted in `droppedMessages`)
  *  - `"block"`: apply backpressure (wait until queue has room or until timeout)
- * @property {number} [queueFullTimeoutMs=5000] Max time to wait for queue space in `"block"` mode.
+ * @property {number} [queueFullTimeoutMs=5000] Max time to wait for queue space in `"block"` mode; `0` waits indefinitely.
  * @property {number} [maxQueueSize=100000] Maximum number of queued file writes before `onQueueFull` applies.
  */
 
@@ -56,7 +59,7 @@ import { pipeline } from "node:stream/promises";
  *
  * @callback LogFormatter
  * @param {string} level Uppercase level string (e.g. "INFO", "ERROR")
- * @param {any} message The message/payload to format
+ * @param {string} message The log arguments, already serialized and joined with spaces
  * @returns {string}
  */
 
@@ -83,7 +86,7 @@ import { pipeline } from "node:stream/promises";
  * @property {number} messagesLogged Total messages successfully written to file.
  * @property {number} bytesWritten Total bytes written to file.
  * @property {number} queueHighWaterMark Max observed queue size.
- * @property {number} writeFailures Total file write failures (includes drops).
+ * @property {number} writeFailures Messages that failed to reach the file (includes drops and circuit-breaker rejections).
  * @property {number} averageWriteTime Moving average write latency in ms.
  * @property {number[]} writeLatencies Most recent write latencies in ms (up to 100).
  * @property {number} rotations Number of file rotations performed.
@@ -99,8 +102,13 @@ import { pipeline } from "node:stream/promises";
 /**
  * Logger instance returned by {@link deadslog}.
  *
- * Logging methods are fire-and-forget (they do not throw); internal failures are reported
- * via `getMetrics()` and internal console errors.
+ * Logging methods are fire-and-forget: they never throw. They are typed `void` so un-awaited
+ * calls stay lint-clean, but each returns a promise that never rejects.
+ * Awaiting one waits until that line is written to file (or has failed). Internal failures
+ * are reported via `getMetrics()` and internal console errors.
+ *
+ * After 5 consecutive messages fail to reach the file, file writes pause for 30 seconds
+ * (messages are rejected and counted in `writeFailures`), then the next write is retried.
  *
  * Each log method supports variadic arguments like `console.log`.
  * Example: `logger.error("something failed", e, { requestId })`
@@ -114,7 +122,7 @@ import { pipeline } from "node:stream/promises";
  * @property {(...args:any[]) => void} error Log an error-level message.
  * @property {(...args:any[]) => void} fatal Log a fatal-level message.
  * @property {() => Promise<void>} flush Wait until all queued writes (and in-flight log calls) complete.
- * @property {() => Promise<void>} destroy Flush and close the underlying file stream.
+ * @property {() => Promise<void>} destroy Flush and close the underlying file stream. Log calls made afterwards are ignored.
  * @property {() => (LoggerMetrics | string)} getMetrics Get file writer metrics, or a message if file output is disabled.
  */
 

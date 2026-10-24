@@ -40,17 +40,20 @@ export type FileOutputConfig = {
      */
     maxLogFiles?: number;
     /**
-     * Strategy when max rotated files is reached.
+     * How rotated files are kept (required when `rotate` is true).
+     * Either way the oldest file is deleted once `maxLogFiles` is exceeded.
+     * - `"deleteOld"`: rotated files are kept as plain text (`app.1.log`, `app.2.log`, ...)
+     * - `"archiveOld"`: rotated files are gzipped (`app.1.log.gz`, `app.2.log.gz`, ...)
      */
     onMaxLogFilesReached?: RotationStrategy;
     /**
      * What to do when the internal write queue is full.
-     * - `"drop"`: reject immediately (message dropped; increments droppedMessages metric)
+     * - `"drop"`: drop the message silently (counted in `droppedMessages`)
      * - `"block"`: apply backpressure (wait until queue has room or until timeout)
      */
     onQueueFull?: QueueFullStrategy;
     /**
-     * Max time to wait for queue space in `"block"` mode.
+     * Max time to wait for queue space in `"block"` mode; `0` waits indefinitely.
      */
     queueFullTimeoutMs?: number;
     /**
@@ -63,7 +66,7 @@ export type FileOutputConfig = {
  *
  * Should return a single formatted log line (without a trailing newline).
  */
-export type LogFormatter = (level: string, message: any) => string;
+export type LogFormatter = (level: string, message: string) => string;
 /**
  * Optional include/exclude filters applied to the *formatted* log line.
  */
@@ -107,7 +110,7 @@ export type LoggerMetrics = {
      */
     queueHighWaterMark: number;
     /**
-     * Total file write failures (includes drops).
+     * Messages that failed to reach the file (includes drops and circuit-breaker rejections).
      */
     writeFailures: number;
     /**
@@ -154,8 +157,13 @@ export type LoggerMetrics = {
 /**
  * Logger instance returned by {@link deadslog}.
  *
- * Logging methods are fire-and-forget (they do not throw); internal failures are reported
- * via `getMetrics()` and internal console errors.
+ * Logging methods are fire-and-forget: they never throw. They are typed `void` so un-awaited
+ * calls stay lint-clean, but each returns a promise that never rejects.
+ * Awaiting one waits until that line is written to file (or has failed). Internal failures
+ * are reported via `getMetrics()` and internal console errors.
+ *
+ * After 5 consecutive messages fail to reach the file, file writes pause for 30 seconds
+ * (messages are rejected and counted in `writeFailures`), then the next write is retried.
  *
  * Each log method supports variadic arguments like `console.log`.
  * Example: `logger.error("something failed", e, { requestId })`
@@ -194,7 +202,7 @@ export type LoggerInstance = {
      */
     flush: () => Promise<void>;
     /**
-     * Flush and close the underlying file stream.
+     * Flush and close the underlying file stream. Log calls made afterwards are ignored.
      */
     destroy: () => Promise<void>;
     /**
