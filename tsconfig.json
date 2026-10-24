@@ -3,6 +3,8 @@
     "declaration": true,
     "emitDeclarationOnly": true,
     "allowJs": true,
+    "skipLibCheck": true,
+    "types": [],
     "outDir": "types"
   },
   "include": ["src/**/*.js"]

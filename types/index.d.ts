@@ -11,7 +11,7 @@ export type ConsoleOutputConfig = {
      */
     enabled: boolean;
     /**
-     * Whether console output uses colors.
+     * Whether console output uses colors (on by default only when `consoleOutput` itself is omitted).
      */
     coloredCoding?: boolean;
 };
@@ -99,7 +99,7 @@ export type LoggerMetrics = {
      */
     messagesLogged: number;
     /**
-     * Total bytes written to file (approx).
+     * Total bytes written to file.
      */
     bytesWritten: number;
     /**
@@ -114,6 +114,10 @@ export type LoggerMetrics = {
      * Moving average write latency in ms.
      */
     averageWriteTime: number;
+    /**
+     * Most recent write latencies in ms (up to 100).
+     */
+    writeLatencies: number[];
     /**
      * Number of file rotations performed.
      */

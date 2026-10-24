@@ -22,9 +22,15 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      # vitest 5 requires Node >=22.12 (dev-only; the package itself supports >=18)
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -53,7 +59,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 

@@ -84,7 +84,7 @@ Returns a logger instance.
 | Option                            | Type       | Description |
 | --------------------------------- | ---------- | ----------- |
 | `consoleOutput.enabled`           | `boolean`  | Enable console logging (default: `true`) |
-| `consoleOutput.coloredCoding`     | `boolean`  | Enable colored output using `yoctocolors` (default: `true`) |
+| `consoleOutput.coloredCoding`     | `boolean`  | Enable colored output using `yoctocolors` (default: `false`; `true` when `consoleOutput` is omitted) |
 | `fileOutput.enabled`              | `boolean`  | Enable file logging (default: `false`) |
 | `fileOutput.logFilePath`          | `string`   | File path for log output (**required** if `fileOutput.enabled` is `true`) |
 | `fileOutput.rotate`               | `boolean`  | Enable automatic log file rotation (default: `false`) |

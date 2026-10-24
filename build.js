@@ -1,18 +1,22 @@
 import { build } from "esbuild";
 
-await build({
+const shared = {
 	entryPoints: ["src/index.js"],
-	outfile: "dist/index.js",
 	bundle: true,
 	minify: true,
 	platform: "node",
-	target: "node16",
-	format: "esm",
+	target: "node18",
 	sourcemap: false,
-	define: {
-		"process.env.NODE_ENV": '"production"',
-		__DEV__: "false",
-	},
-	mangleProps: /^_/, // Optional but very effective
 	logLevel: "info",
-}).catch(() => process.exit(1));
+};
+
+await Promise.all([
+	build({ ...shared, outfile: "dist/index.js", format: "esm" }),
+	// Real CommonJS bundle so `require("deadslog")` works without require(esm) support.
+	build({
+		...shared,
+		outfile: "dist/index.cjs",
+		format: "cjs",
+		footer: { js: "module.exports=module.exports.default;" },
+	}),
+]).catch(() => process.exit(1));
