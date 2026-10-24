@@ -4,7 +4,7 @@
 	"author": "c4lyp5o",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/c4lyp5o/deadslog.git"
+		"url": "git+https://github.com/c4lyp5o/deadslog.git"
 	},
 	"main": "dist/index.cjs",
 	"module": "dist/index.js",
